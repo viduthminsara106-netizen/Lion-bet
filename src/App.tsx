@@ -18,6 +18,8 @@ import {
   saveUser,
   getCurrentUser,
   setCurrentUser,
+  hasActiveAuthSession,
+  clearCurrentUserSession,
   getAdminSettings,
   saveAdminSettings,
   getRoundHistory,
@@ -76,6 +78,7 @@ import {
 
 export default function App() {
   // App States
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasActiveAuthSession());
   const [currentUser, setCurrentUserState] = useState<User>(getCurrentUser());
   const [activePage, setActivePage] = useState<'lobby' | 'game' | 'sports'>('lobby');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -198,7 +201,7 @@ export default function App() {
   });
 
   // Modal Dialogs
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(() => !hasActiveAuthSession());
   const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>('register');
   const [authInitialPromo, setAuthInitialPromo] = useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -219,12 +222,30 @@ export default function App() {
   );
   const [activeToasts, setActiveToasts] = useState<AppNotification[]>([]);
 
-  const handleOpenRegisterWithPromo = useCallback((code: string) => {
-    const clean = code.trim().toUpperCase();
-    setAuthInitialPromo(clean);
-    setAuthInitialTab('register');
-    setIsAuthOpen(true);
-  }, []);
+  const handleOpenRegisterWithPromo = useCallback(
+    (code: string) => {
+      const clean = code.trim().toUpperCase();
+      if (currentUser?.id) {
+        clearUserPresenceOnLogout(currentUser.id);
+      }
+      clearCurrentUserSession();
+      const unauthUser = getCurrentUser();
+      setCurrentUserState(unauthUser);
+      setIsAuthenticated(false);
+      setIsSiteMenuOpen(false);
+      setIsReferralOpen(false);
+      setIsProfileOpen(false);
+      setAuthInitialPromo(clean);
+      setAuthInitialTab('register');
+      setIsAuthOpen(true);
+      try {
+        localStorage.setItem('lionbet_pending_ref_code', clean);
+        const nextUrl = `${window.location.pathname}?ref=${encodeURIComponent(clean)}`;
+        window.history.replaceState({ lionbetAuthGate: true }, '', nextUrl);
+      } catch {}
+    },
+    [currentUser?.id]
+  );
 
   // Automatically open Register screen with Promocode auto-filled when a referral link (?ref=CODE or ?promo=CODE) is opened
   useEffect(() => {
@@ -234,12 +255,38 @@ export default function App() {
       if (refCode && refCode.trim()) {
         const clean = refCode.trim().toUpperCase();
         localStorage.setItem('lionbet_pending_ref_code', clean);
+        clearCurrentUserSession();
+        const unauthUser = getCurrentUser();
+        setCurrentUserState(unauthUser);
+        setIsAuthenticated(false);
         setAuthInitialPromo(clean);
         setAuthInitialTab('register');
         setIsAuthOpen(true);
       }
     } catch {}
   }, []);
+
+  // Prevent browser Back button or Escape key from dismissing Register/Login screen or restoring a previous account
+  useEffect(() => {
+    if (isAuthenticated && !isAuthOpen) return;
+
+    try {
+      window.history.pushState({ lionbetAuthGate: true }, '', window.location.href);
+    } catch {}
+
+    const handleAuthPopState = () => {
+      try {
+        window.history.pushState({ lionbetAuthGate: true }, '', window.location.href);
+      } catch {}
+      setIsAuthenticated(false);
+      setIsAuthOpen(true);
+    };
+
+    window.addEventListener('popstate', handleAuthPopState);
+    return () => {
+      window.removeEventListener('popstate', handleAuthPopState);
+    };
+  }, [isAuthenticated, isAuthOpen]);
 
   const dismissToast = useCallback((id: string) => {
     setActiveToasts((prev) => prev.filter((t) => t.id !== id));
@@ -1662,29 +1709,21 @@ export default function App() {
     if (currentUser?.id) {
       clearUserPresenceOnLogout(currentUser.id);
     }
-    const guestUser: User = {
-      id: 'guest_' + Date.now(),
-      username: 'LankaPilot_' + Math.floor(100 + Math.random() * 900),
-      email: 'guest@balloon.lk',
-      role: 'player',
-      balance: 0.00, // Initial balance is 0 until deposit or Admin/Agent balance update
-      bonusBalance: 0.00,
-      hasReceivedFirstDepositBonus: false,
-      referralCode: 'LANKA' + Math.floor(100 + Math.random() * 900),
-      referralCount: 0,
-      referralEarnings: 0,
-      unclaimedReferralRewards: 0,
-      totalWagered: 0,
-      totalWon: 0,
-      isBanned: false,
-      avatar: '🦁',
-      createdAt: Date.now(),
-    };
-    setCurrentUser(guestUser);
-    setCurrentUserState(guestUser);
+    clearCurrentUserSession();
+    const unauthUser = getCurrentUser();
+    currentUserRef.current = unauthUser;
+    setCurrentUserState(unauthUser);
+    setIsAuthenticated(false);
+    setIsSiteMenuOpen(false);
+    setIsProfileOpen(false);
+    setIsAdminOpen(false);
+    setAgentPanelMode(null);
     setActivePage('lobby');
     setAuthInitialTab('login');
     setIsAuthOpen(true);
+    try {
+      window.history.replaceState({ lionbetAuthGate: true }, '', window.location.pathname);
+    } catch {}
   };
 
   const userBetHistory = useMemo(
@@ -1700,6 +1739,36 @@ export default function App() {
   const handleOpenProvablyFairModal = useCallback(() => {
     setIsProvablyFairOpen(true);
   }, []);
+
+  // Mandatory Authentication Gate: Do not render any pre-existing or guest account until user logs in or registers
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden flex flex-col font-sans bg-slate-950 text-slate-100">
+        {isSiteBooting && <LionBetSiteLoader onFinished={() => setIsSiteBooting(false)} />}
+        <AuthModal
+          isOpen={true}
+          initialTab={authInitialTab}
+          initialPromoCode={authInitialPromo}
+          onClose={() => {}}
+          onLoginSuccess={(u) => {
+            currentUserRef.current = u;
+            setCurrentUserState(u);
+            setIsAuthenticated(true);
+            setIsAuthOpen(false);
+            setActivePage('lobby');
+            try {
+              window.history.replaceState({}, '', window.location.pathname);
+            } catch {}
+            if (u.role === 'deposit_agent' || u.role === 'cash_agent') {
+              setAgentPanelMode('deposit_panel');
+            } else if (u.role === 'withdraw_agent') {
+              setAgentPanelMode('withdraw_page');
+            }
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -2248,11 +2317,16 @@ export default function App() {
         isOpen={isAuthOpen}
         initialTab={authInitialTab}
         initialPromoCode={authInitialPromo}
-        onClose={() => setIsAuthOpen(false)}
+        onClose={() => {}}
         onLoginSuccess={(u) => {
           currentUserRef.current = u;
           setCurrentUserState(u);
+          setIsAuthenticated(true);
+          setIsAuthOpen(false);
           setActivePage('lobby');
+          try {
+            window.history.replaceState({}, '', window.location.pathname);
+          } catch {}
           if (u.role === 'deposit_agent' || u.role === 'cash_agent') {
             setAgentPanelMode('deposit_panel');
           } else if (u.role === 'withdraw_agent') {

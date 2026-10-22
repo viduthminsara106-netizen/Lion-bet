@@ -501,22 +501,76 @@ export function deleteUser(userId: string) {
   }).catch(() => {});
 }
 
+const AUTH_SESSION_KEY = 'lionbet_explicit_auth_session_v1';
+
+const UNAUTHENTICATED_USER_PLACEHOLDER: User = {
+  id: '',
+  username: 'Guest',
+  email: '',
+  role: 'player',
+  balance: 0.0,
+  bonusBalance: 0.0,
+  hasReceivedFirstDepositBonus: false,
+  referralCode: '',
+  referralCount: 0,
+  referralEarnings: 0,
+  unclaimedReferralRewards: 0,
+  totalWagered: 0,
+  totalWon: 0,
+  isBanned: false,
+  avatar: '🦁',
+  createdAt: 0,
+};
+
+export function hasActiveAuthSession(): boolean {
+  try {
+    if (localStorage.getItem(AUTH_SESSION_KEY) !== '1') return false;
+    const raw = localStorage.getItem(CURRENT_USER_KEY);
+    if (!raw) return false;
+    const parsed: User = JSON.parse(raw);
+    if (!parsed || !parsed.id || parsed.id.startsWith('guest_') || isRemovedFakeAgent(parsed)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearCurrentUserSession() {
+  try {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    localStorage.removeItem(CURRENT_USER_KEY);
+  } catch {}
+}
+
 export function getCurrentUser(): User {
   try {
+    if (!hasActiveAuthSession()) {
+      return UNAUTHENTICATED_USER_PLACEHOLDER;
+    }
     const raw = localStorage.getItem(CURRENT_USER_KEY);
     if (raw) {
       const parsed: User = JSON.parse(raw);
-      if (!isRemovedFakeAgent(parsed)) {
+      if (parsed && parsed.id && !parsed.id.startsWith('guest_') && !isRemovedFakeAgent(parsed)) {
+        const latestFromDb = getUsers().find((u) => u.id === parsed.id);
+        if (latestFromDb) {
+          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestFromDb));
+          return latestFromDb;
+        }
         return parsed;
       }
     }
   } catch {}
-  const users = getUsers();
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(users[0]));
-  return users[0];
+  return UNAUTHENTICATED_USER_PLACEHOLDER;
 }
 
 export function setCurrentUser(user: User) {
+  if (!user || !user.id || user.id.startsWith('guest_')) {
+    clearCurrentUserSession();
+    return;
+  }
+  localStorage.setItem(AUTH_SESSION_KEY, '1');
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
   saveUser(user);
 }

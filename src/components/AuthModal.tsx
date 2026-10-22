@@ -9,7 +9,6 @@ import {
 } from '../services/storage';
 import { googleSignIn } from '../services/firebaseAuth';
 import {
-  X,
   LogIn,
   UserPlus,
   User as UserIcon,
@@ -370,13 +369,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Tab Switcher */}

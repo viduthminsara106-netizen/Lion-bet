@@ -1,0 +1,6 @@
+{
+  "name": "Balloon Crash - Parachute Betting Game",
+  "description": "High-flying multiplier crash game with animated hot-air balloon, parachute cashouts, provably fair engine, live multiplayer chat, referral system, and admin panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

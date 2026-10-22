@@ -17,7 +17,7 @@ const ADMIN_SETTINGS_KEY = 'balloon_admin_lkr_settings';
 const TRANSACTIONS_KEY = 'balloon_lkr_transactions';
 const BET_HISTORY_KEY = 'balloon_lkr_bet_history';
 
-// Initial users with LKR balances (Players, Admin, Deposit Agent, Withdraw Agent)
+// Initial users with LKR balances (Players start at Rs. 0 until deposit or Admin/Agent update)
 const INITIAL_USERS: User[] = [
   {
     id: 'user_player_1',
@@ -26,15 +26,15 @@ const INITIAL_USERS: User[] = [
     email: 'kasun@winxcash.lk',
     password: '12345678',
     role: 'player',
-    balance: 25000.0, // Rs. 25,000 LKR
+    balance: 0.0, // Rs. 0.00 LKR until deposit or Admin/Agent balance update
     bonusBalance: 0,
     hasReceivedFirstDepositBonus: false,
     referralCode: 'WINX777',
     referralCount: 4,
     referralEarnings: 4500.0,
-    unclaimedReferralRewards: 1800.0,
-    totalWagered: 48000.0,
-    totalWon: 52400.0,
+    unclaimedReferralRewards: 0.0,
+    totalWagered: 0.0,
+    totalWon: 0.0,
     isBanned: false,
     avatar: '🦁',
     createdAt: Date.now() - 86400000 * 5,
@@ -410,12 +410,23 @@ export function getUsers(): User[] {
       return true;
     });
 
+    const zeroBalMigrationDone = localStorage.getItem('lionbet_zero_initial_bal_v2') === '1';
+
     const migrated = withoutFakeAgents.map((u) => {
       if (u.role === 'admin' || u.id === 'user_admin_1') {
         if (u.mobile !== '0711452778' || u.password !== '12345678') {
           updated = true;
           return { ...u, mobile: '0711452778', password: '12345678' };
         }
+      }
+      if (
+        !zeroBalMigrationDone &&
+        u.role === 'player' &&
+        !u.hasReceivedFirstDepositBonus &&
+        (u.id === 'user_player_1' || u.id.startsWith('user_1') || u.id.startsWith('guest_'))
+      ) {
+        updated = true;
+        return { ...u, balance: 0, bonusBalance: 0 };
       }
       return u;
     });
@@ -425,6 +436,27 @@ export function getUsers(): User[] {
         migrated.push(seedUser);
         updated = true;
       }
+    }
+
+    if (!zeroBalMigrationDone) {
+      localStorage.setItem('lionbet_zero_initial_bal_v2', '1');
+      try {
+        const curRaw = localStorage.getItem(CURRENT_USER_KEY);
+        if (curRaw) {
+          const curParsed: User = JSON.parse(curRaw);
+          if (
+            curParsed.role === 'player' &&
+            !curParsed.hasReceivedFirstDepositBonus &&
+            (curParsed.id === 'user_player_1' ||
+              curParsed.id.startsWith('user_1') ||
+              curParsed.id.startsWith('guest_'))
+          ) {
+            curParsed.balance = 0;
+            curParsed.bonusBalance = 0;
+            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(curParsed));
+          }
+        }
+      } catch {}
     }
 
     if (updated) {

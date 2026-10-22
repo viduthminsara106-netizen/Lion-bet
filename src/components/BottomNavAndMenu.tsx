@@ -234,6 +234,7 @@ interface SiteMenuModalProps {
   onOpenCasino: () => void;
   onOpenBetSlip: () => void;
   onOpenReferralModal: () => void;
+  onOpenRegisterWithPromo?: (promoCode: string) => void;
   onOpenLeaderboard: () => void;
   onOpenProvablyFair: () => void;
   onOpenAdmin?: () => void;
@@ -260,6 +261,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
   onOpenWithdraw,
   onOpenCasino,
   onOpenReferralModal,
+  onOpenRegisterWithPromo,
   onOpenLeaderboard,
   onOpenProvablyFair,
   onOpenAdmin,
@@ -267,6 +269,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
 }) => {
   const [subView, setSubView] = useState<MenuSubView>('main');
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [crashBets, setCrashBets] = useState<BetRecord[]>([]);
   const [sportsSlips, setSportsSlips] = useState<SportsBetSlip[]>([]);
@@ -337,7 +340,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
     if (localStorage.getItem(redeemedKey)) {
       setPromoFeedback({
         type: 'error',
-        text: `Promo code "${clean}" has already been redeemed on your account.`,
+        text: `Promo code "${clean}" has already been applied on your account.`,
       });
       return;
     }
@@ -353,12 +356,10 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
       return;
     }
 
-    if (clean === 'LION100' || clean === 'WELCOME500' || clean === 'VIP2026') {
-      const rewardLkr = clean === 'VIP2026' ? 1000 : 500;
+    if (!currentUser.hasReceivedFirstDepositBonus) {
       const updatedUser: User = {
         ...currentUser,
-        balance: Number((currentUser.balance + rewardLkr).toFixed(2)),
-        bonusBalance: Number(((currentUser.bonusBalance || 0) + rewardLkr).toFixed(2)),
+        referredBy: clean,
       };
       saveUser(updatedUser);
       setCurrentUser(updatedUser);
@@ -367,14 +368,14 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
       setPromoCodeInput('');
       setPromoFeedback({
         type: 'success',
-        text: `Promo code "${clean}" redeemed! +Rs. ${rewardLkr.toLocaleString()} LKR Bonus added to your balance!`,
+        text: `Promocode "${clean}" linked! Make your 1st Deposit now to receive your 100% First Deposit Bonus!`,
       });
       return;
     }
 
     setPromoFeedback({
       type: 'error',
-      text: 'Invalid promo code. Try LION100, LUCKY777, or VIP2026.',
+      text: '1st Deposit 100% Bonus has already been claimed on this account.',
     });
   };
 
@@ -878,19 +879,22 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
                 )}
               </div>
 
-              {/* 2. 100% First Deposit Bonus */}
+              {/* 2. 100% First Deposit Bonus (Promo Code Registrations Only) */}
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-black text-white">
                     🎁 100% First Deposit Welcome Bonus
                   </span>
                   <span className="text-xs font-bold text-emerald-400">
-                    {currentUser.hasReceivedFirstDepositBonus ? 'Claimed' : 'Available'}
+                    {currentUser.hasReceivedFirstDepositBonus
+                      ? 'Claimed'
+                      : currentUser.referredBy
+                      ? `Eligible (Promo: ${currentUser.referredBy})`
+                      : 'Requires Promocode'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Double your first LKR deposit instantly with a 100% matched bonus balance. Current
-                  Bonus Balance: Rs. {(currentUser.bonusBalance || 0).toLocaleString()} LKR.
+                  Exclusively for players who register using a Promocode / Referral Link! Double your first LKR deposit with a 100% matched bonus after you deposit. Current Bonus Balance: Rs. {(currentUser.bonusBalance || 0).toLocaleString()} LKR.
                 </p>
                 <button
                   type="button"
@@ -1421,7 +1425,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
           {subView === 'my_team' && (
             <div className="space-y-4">
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
-                <div className="text-xs text-slate-400">Your Team Referral Code</div>
+                <div className="text-xs text-slate-400">Your Team Referral / Promo Code</div>
                 <div className="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5">
                   <span className="font-mono font-black text-base text-amber-400">
                     {currentUser.referralCode}
@@ -1433,6 +1437,41 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
                   >
                     <Copy className="w-3.5 h-3.5" />
                     <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
+                  </button>
+                </div>
+
+                <div className="text-xs text-slate-400 pt-1">
+                  Your Referral Link (Click to Open Register with Auto-Filled Promocode)
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.setItem('lionbet_pending_ref_code', currentUser.referralCode);
+                        const nextUrl = `${window.location.pathname}?ref=${encodeURIComponent(
+                          currentUser.referralCode
+                        )}`;
+                        window.history.replaceState({}, '', nextUrl);
+                      } catch {}
+                      onClose();
+                      onOpenRegisterWithPromo?.(currentUser.referralCode);
+                    }}
+                    className="flex-1 bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 rounded-xl px-3 py-2 text-left font-mono text-[11px] text-emerald-400 truncate underline cursor-pointer"
+                  >
+                    {`${window.location.origin}${window.location.pathname}?ref=${currentUser.referralCode}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = `${window.location.origin}${window.location.pathname}?ref=${currentUser.referralCode}`;
+                      navigator.clipboard.writeText(url);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2500);
+                    }}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer shrink-0"
+                  >
+                    {copiedLink ? 'Copied!' : 'Copy Link'}
                   </button>
                 </div>
 

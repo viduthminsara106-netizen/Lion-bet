@@ -25,6 +25,8 @@ import {
 
 interface AuthModalProps {
   isOpen: boolean;
+  initialTab?: 'login' | 'register';
+  initialPromoCode?: string;
   onClose: () => void;
   onLoginSuccess: (user: User) => void;
 }
@@ -33,10 +35,12 @@ const REMEMBER_STORAGE_KEY = 'balloon_lkr_remember_credentials';
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
+  initialTab = 'register',
+  initialPromoCode = '',
   onClose,
   onLoginSuccess,
 }) => {
-  const [tab, setTab] = useState<'login' | 'register'>('register');
+  const [tab, setTab] = useState<'login' | 'register'>(initialTab);
 
   // Login State
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -49,7 +53,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [promoCode, setPromoCode] = useState('');
+  const [promoCode, setPromoCode] = useState(initialPromoCode);
   const [showRegPassword, setShowRegPassword] = useState(false);
 
   // Shared Remember Me State
@@ -58,11 +62,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  // Load remembered credentials & sync Admin-created Cash Agents on mount
+  // Load remembered credentials, check referral link promo code, & sync Admin-created Cash Agents
   useEffect(() => {
     if (isOpen) {
       fetchCashAgentsWithPresence().catch(() => {});
+      setTab(initialTab);
     }
+
+    // Check URL or prop for referral / promo code auto-fill
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlRef =
+        params.get('ref') ||
+        params.get('promo') ||
+        params.get('referral') ||
+        initialPromoCode ||
+        localStorage.getItem('lionbet_pending_ref_code') ||
+        '';
+      if (urlRef.trim()) {
+        setPromoCode(urlRef.trim().toUpperCase());
+        setTab('register');
+      }
+    } catch {}
+
     try {
       const saved = localStorage.getItem(REMEMBER_STORAGE_KEY);
       if (saved) {
@@ -72,7 +94,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setRememberMe(true);
       }
     } catch {}
-  }, [isOpen]);
+  }, [isOpen, initialTab, initialPromoCode]);
 
   if (!isOpen) return null;
 
@@ -219,21 +241,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         .replace(/[^A-Z0-9]/g, '')
         .substring(0, 5) + Math.floor(100 + Math.random() * 900);
 
-    // Check Promo / Referral Code
+    // Check Promo / Referral Code:
+    // Only users who register with a Promo / Referral Code qualify for the 100% 1st Deposit Bonus after depositing!
+    // Initial balance is strictly Rs. 0.00 until the user deposits or an Admin/Cash Agent updates their balance.
     let referredByUser: User | undefined;
-    let promoBonus = 0;
     const cleanPromo = promoCode.trim().toUpperCase();
     if (cleanPromo) {
       referredByUser = users.find((u) => u.referralCode.toUpperCase() === cleanPromo);
       if (referredByUser) {
         referredByUser.referralCount += 1;
-        referredByUser.unclaimedReferralRewards += 500.0;
-        referredByUser.referralEarnings += 500.0;
         saveUser(referredByUser);
-        promoBonus = 1000.0;
-      } else {
-        // Any valid promo code string gives Rs. 1,000 welcome promo bonus
-        promoBonus = 1000.0;
       }
     }
 
@@ -247,7 +264,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       email: trimmedEmail,
       password,
       role: 'player',
-      balance: 25000.0 + promoBonus,
+      balance: 0.0, // Initial balance is 0 until deposit or Admin/Agent balance update
+      bonusBalance: 0.0,
+      hasReceivedFirstDepositBonus: false,
       referralCode: newReferralCode,
       referredBy: referredByUser?.referralCode || (cleanPromo ? cleanPromo : undefined),
       referralCount: 0,
@@ -259,6 +278,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       avatar: randomAvatar,
       createdAt: Date.now(),
     };
+
+    try {
+      localStorage.removeItem('lionbet_pending_ref_code');
+    } catch {}
 
     if (rememberMe) {
       localStorage.setItem(
@@ -286,6 +309,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           (u) => u.email.toLowerCase() === res.user.email?.toLowerCase()
         );
         if (!existing) {
+          const cleanPromo = promoCode.trim().toUpperCase();
           const newCode =
             (res.user.displayName || 'USER')
               .toUpperCase()
@@ -296,8 +320,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             username: res.user.displayName || 'GooglePlayer',
             email: res.user.email || 'google@user.com',
             role: 'player',
-            balance: 25000.0,
+            balance: 0.0, // Initial balance is 0 until deposit or Admin/Agent balance update
+            bonusBalance: 0.0,
+            hasReceivedFirstDepositBonus: false,
             referralCode: newCode,
+            referredBy: cleanPromo ? cleanPromo : undefined,
             referralCount: 0,
             referralEarnings: 0,
             unclaimedReferralRewards: 0,
@@ -576,9 +603,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* 6. Promocode */}
               <div>
                 <label className="text-xs font-bold text-slate-300 flex items-center justify-between mb-1">
-                  <span>Promocode</span>
+                  <span>Promocode / Referral Code</span>
                   <span className="text-emerald-400 text-[10px] font-semibold">
-                    Optional (+ Rs. 1,000 Bonus)
+                    Required for 1st Deposit 100% Bonus
                   </span>
                 </label>
                 <div className="relative flex items-center">
@@ -586,11 +613,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <input
                     type="text"
                     value={promoCode}
-                    onChange={(e) => setPromoCode(e.target.value)}
-                    placeholder="Enter promocode (optional)"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-3 py-2.5 text-xs font-mono uppercase text-emerald-400 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                    placeholder="Enter promocode for 100% 1st Deposit Bonus"
+                    className="w-full bg-slate-950 border border-emerald-500/40 rounded-xl pl-10 pr-3 py-2.5 text-xs font-mono uppercase text-emerald-400 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
+                {promoCode.trim() ? (
+                  <p className="text-[10px] text-emerald-400 font-bold mt-1">
+                    ✓ Promocode &ldquo;{promoCode.trim().toUpperCase()}&rdquo; active — You will receive a 100% Bonus on your 1st Deposit!
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-amber-300/90 mt-1">
+                    * Only accounts registered with a Promocode receive the 100% 1st Deposit Bonus upon depositing. New accounts start at Rs. 0.00 balance.
+                  </p>
+                )}
               </div>
 
               {/* 7. Tick for Remember Me */}

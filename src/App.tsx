@@ -199,6 +199,8 @@ export default function App() {
 
   // Modal Dialogs
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>('register');
+  const [authInitialPromo, setAuthInitialPromo] = useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isReferralOpen, setIsReferralOpen] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
@@ -216,6 +218,28 @@ export default function App() {
     getInitialNotifications(currentUser.id)
   );
   const [activeToasts, setActiveToasts] = useState<AppNotification[]>([]);
+
+  const handleOpenRegisterWithPromo = useCallback((code: string) => {
+    const clean = code.trim().toUpperCase();
+    setAuthInitialPromo(clean);
+    setAuthInitialTab('register');
+    setIsAuthOpen(true);
+  }, []);
+
+  // Automatically open Register screen with Promocode auto-filled when a referral link (?ref=CODE or ?promo=CODE) is opened
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const refCode = params.get('ref') || params.get('promo') || params.get('referral');
+      if (refCode && refCode.trim()) {
+        const clean = refCode.trim().toUpperCase();
+        localStorage.setItem('lionbet_pending_ref_code', clean);
+        setAuthInitialPromo(clean);
+        setAuthInitialTab('register');
+        setIsAuthOpen(true);
+      }
+    } catch {}
+  }, []);
 
   const dismissToast = useCallback((id: string) => {
     setActiveToasts((prev) => prev.filter((t) => t.id !== id));
@@ -1643,7 +1667,9 @@ export default function App() {
       username: 'LankaPilot_' + Math.floor(100 + Math.random() * 900),
       email: 'guest@balloon.lk',
       role: 'player',
-      balance: 25000.00,
+      balance: 0.00, // Initial balance is 0 until deposit or Admin/Agent balance update
+      bonusBalance: 0.00,
+      hasReceivedFirstDepositBonus: false,
       referralCode: 'LANKA' + Math.floor(100 + Math.random() * 900),
       referralCount: 0,
       referralEarnings: 0,
@@ -1657,6 +1683,7 @@ export default function App() {
     setCurrentUser(guestUser);
     setCurrentUserState(guestUser);
     setActivePage('lobby');
+    setAuthInitialTab('login');
     setIsAuthOpen(true);
   };
 
@@ -2166,6 +2193,7 @@ export default function App() {
         onOpenCasino={() => setActivePage('lobby')}
         onOpenBetSlip={() => setActivePage('sports')}
         onOpenReferralModal={() => setIsReferralOpen(true)}
+        onOpenRegisterWithPromo={handleOpenRegisterWithPromo}
         onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
         onOpenProvablyFair={() => setIsProvablyFairOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
@@ -2181,7 +2209,10 @@ export default function App() {
           currentUserRef.current = u;
           setCurrentUserState(u);
         }}
-        onOpenAuthModal={() => setIsAuthOpen(true)}
+        onOpenAuthModal={() => {
+          setAuthInitialTab('register');
+          setIsAuthOpen(true);
+        }}
         onLogout={handleLogout}
       />
 
@@ -2215,6 +2246,8 @@ export default function App() {
 
       <AuthModal
         isOpen={isAuthOpen}
+        initialTab={authInitialTab}
+        initialPromoCode={authInitialPromo}
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(u) => {
           currentUserRef.current = u;
@@ -2233,6 +2266,7 @@ export default function App() {
         onClose={() => setIsReferralOpen(false)}
         currentUser={currentUser}
         onClaimRewards={handleClaimReferral}
+        onOpenRegisterWithPromo={handleOpenRegisterWithPromo}
       />
 
       <LeaderboardModal

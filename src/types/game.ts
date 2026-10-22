@@ -8,7 +8,7 @@ export type UserRole =
   | 'withdraw_agent'
   | 'cash_agent';
 
-export type PaymentMethod = 'bank_transfer' | 'cash_agent' | 'card' | 'crypto';
+export type PaymentMethod = 'bank_transfer' | 'cash_agent';
 
 export interface Transaction {
   id: string;
@@ -19,6 +19,8 @@ export interface Transaction {
   bonusAdded?: number; // 100% 1st deposit bonus in LKR
   method: PaymentMethod;
   accountDetails: string;
+  receiptImage?: string; // Base64 / Data URL of uploaded bank transfer receipt
+  receiptFileName?: string; // File name of uploaded receipt
   processedBy?: string; // Admin or Cash Agent username
   status: 'completed' | 'pending' | 'rejected';
   timestamp: number;

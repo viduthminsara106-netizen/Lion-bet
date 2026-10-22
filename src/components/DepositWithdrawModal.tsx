@@ -98,7 +98,8 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
     0,
     Number((currentUser.balance - bonusBalance).toFixed(2))
   );
-  const isFirstDepositEligible = !currentUser.hasReceivedFirstDepositBonus;
+  const hasUsedPromoCode = Boolean(currentUser.referredBy && currentUser.referredBy.trim().length > 0);
+  const isFirstDepositEligible = hasUsedPromoCode && !currentUser.hasReceivedFirstDepositBonus;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,24 +121,28 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
       return;
     }
 
+    if (method === 'bank_transfer' && !slipFile) {
+      setErrorMessage('You must upload your bank transfer receipt/slip before submitting.');
+      return;
+    }
+
     const isPendingApproval = method === 'bank_transfer';
     const firstDepositBonusAmount = isFirstDepositEligible ? amount : 0;
 
     const chosenAgent = siteAgents.find((a) => a.id === selectedAgentId);
     const methodDetails =
       method === 'bank_transfer'
-        ? `${bankName} (Slip: ${slipFileName || 'Uploaded'})`
-        : method === 'cash_agent'
-        ? `Lion Bet Agent (${
+        ? `${bankName} (Acc: 8020510080 • Branch: Deiyandara • Receipt: ${slipFileName || 'Attached'})`
+        : `Lion Bet Agent (${
             chosenAgent
               ? `${chosenAgent.username} [${chosenAgent.isOnline ? 'ONLINE' : 'OFFLINE'}]`
               : agentReference.trim() || 'WhatsApp Verified - 0723905537'
-          })`
-        : `CARD / CRYPTO`;
+          })`;
 
     const tx: Transaction = {
       id: 'tx_dep_' + Date.now(),
       userId: currentUser.id,
+      username: currentUser.username,
       type: 'deposit',
       amount,
       bonusAdded: firstDepositBonusAmount,
@@ -145,12 +150,18 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
       accountDetails: `${methodDetails}${
         firstDepositBonusAmount > 0 ? ` [+100% 1st Deposit Bonus: Rs.${firstDepositBonusAmount}]` : ''
       }`,
+      receiptImage: method === 'bank_transfer' && slipFile ? slipFile : undefined,
+      receiptFileName: method === 'bank_transfer' && slipFileName ? slipFileName : undefined,
       status: isPendingApproval ? 'pending' : 'completed',
       timestamp: Date.now(),
     };
 
     addTransaction(tx);
     setTransactions(getTransactions());
+    if (method === 'bank_transfer') {
+      setSlipFile(null);
+      setSlipFileName('');
+    }
 
     if (!isPendingApproval) {
       const updatedUser: User = {
@@ -217,9 +228,7 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
       accountDetails:
         method === 'bank_transfer'
           ? `${bankName} - ${accountNumber}`
-          : method === 'cash_agent'
-          ? `Cash Agent Payout - ${accountNumber} (${accountName || currentUser.username})`
-          : `USDT TRC20 - ${accountNumber}`,
+          : `Cash Agent Payout - ${accountNumber} (${accountName || currentUser.username})`,
       status: 'pending',
       timestamp: Date.now(),
     };
@@ -525,7 +534,7 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
         <div className="p-6 overflow-y-auto space-y-5 text-xs text-slate-300 flex-1">
           {activeTab === 'deposit' && (
             <form onSubmit={handleDeposit} className="space-y-4">
-              {/* 1st Deposit 100% Bonus Banner */}
+              {/* 1st Deposit 100% Bonus Banner (Only for users registered with a Promocode) */}
               {isFirstDepositEligible ? (
                 <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-emerald-500/15 to-amber-500/20 border border-amber-500/50 flex items-start gap-3">
                   <div className="p-2 rounded-lg bg-amber-500/25 text-amber-300 shrink-0 mt-0.5">
@@ -533,10 +542,10 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                   </div>
                   <div className="space-y-1">
                     <span className="font-black text-amber-300 text-xs uppercase tracking-wide block">
-                      🎁 1st Deposit 100% Bonus Available!
+                      🎁 1st Deposit 100% Bonus Active (Promocode: {currentUser.referredBy})!
                     </span>
                     <p className="text-[11px] text-slate-200 leading-relaxed">
-                      Your <strong>First Deposit only</strong> receives an instant{' '}
+                      Because you registered with a Promocode, your <strong>First Deposit</strong> receives an instant{' '}
                       <strong>100% Bonus</strong>! (Deposit{' '}
                       <strong>Rs. {amount.toLocaleString()}</strong> → Total Credited:{' '}
                       <strong className="text-emerald-400">
@@ -549,10 +558,15 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                     </p>
                   </div>
                 </div>
-              ) : (
+              ) : currentUser.hasReceivedFirstDepositBonus ? (
                 <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
                   <span>✅ 1st Deposit 100% Bonus already claimed on this account.</span>
                   <span className="font-bold text-emerald-400">Standard Deposit (0% Bonus)</span>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                  <span>ℹ️ 1st Deposit 100% Bonus is exclusively for accounts registered with a Promocode.</span>
+                  <span className="font-bold text-slate-300">Standard Deposit (0% Bonus)</span>
                 </div>
               )}
 
@@ -560,11 +574,20 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 <label className="font-bold text-slate-300 block mb-2">
                   Select Deposit Method:
                 </label>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
                   {[
-                    { id: 'cash_agent', label: 'Cash Agent', sub: 'Official Agent (+100% 1st)', icon: '🤝' },
-                    { id: 'bank_transfer', label: 'Bank Transfer', sub: 'Upload Slip (Admin Review)', icon: '🏦' },
-                    { id: 'card', label: 'Card / Crypto', sub: 'Instant Gateway (+100% 1st)', icon: '💎' },
+                    {
+                      id: 'cash_agent',
+                      label: 'Cash Agent',
+                      sub: isFirstDepositEligible ? 'Official Agent (+100% 1st Bonus)' : 'Online Cash Agent (WhatsApp)',
+                      icon: '🤝',
+                    },
+                    {
+                      id: 'bank_transfer',
+                      label: 'Bank Transfer',
+                      sub: 'Upload Slip (Admin Review)',
+                      icon: '🏦',
+                    },
                   ].map((m) => (
                     <button
                       key={m.id}
@@ -675,48 +698,101 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 </div>
               )}
 
-              {/* Bank Transfer specific: Bank details & Slip Upload */}
+              {/* Bank Transfer specific: Bank details & Mandatory Receipt Upload */}
               {method === 'bank_transfer' && (
                 <div className="p-4 bg-slate-950 rounded-xl border border-emerald-500/30 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-black text-emerald-400 text-xs">🏦 Bank Transfer Details</span>
                     <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-bold">
-                      Admin Approval Required
+                      Receipt Required • Admin Approval
                     </span>
                   </div>
 
-                  <div className="text-[11px] text-slate-300 space-y-1 bg-slate-900 p-3 rounded-lg border border-slate-800">
+                  <div className="text-[11px] text-slate-300 space-y-1.5 bg-slate-900 p-3 rounded-lg border border-slate-800">
                     <p>• Bank: <strong className="text-white">Commercial Bank of Ceylon</strong></p>
-                    <p>• Account Name: <strong className="text-white">Lion Bet Gaming LK (Pvt) Ltd</strong></p>
-                    <p>• Account Number: <strong className="text-emerald-400 font-mono text-xs">8009214451</strong></p>
-                    <p>• Branch: <strong className="text-white">Colombo Main Branch</strong></p>
+                    <p>• Account Number: <strong className="text-emerald-400 font-mono text-sm">8020510080</strong></p>
+                    <p>• Branch: <strong className="text-amber-300">Deiyandara</strong></p>
                   </div>
 
                   <div>
-                    <label className="font-bold text-slate-300 block mb-1">Upload Bank Transfer Slip / Receipt:</label>
+                    <label className="font-bold text-slate-300 flex items-center justify-between mb-1">
+                      <span>Upload Bank Transfer Receipt / Slip: <span className="text-rose-400">*</span></span>
+                      <span className="text-[10px] text-amber-400 font-bold">Required before submit</span>
+                    </label>
                     <div className="flex items-center gap-3">
-                      <label className="flex-1 flex items-center justify-center gap-2 p-3 bg-slate-900 border border-dashed border-slate-700 hover:border-emerald-500 rounded-xl cursor-pointer transition text-xs text-slate-300">
+                      <label
+                        className={`flex-1 flex items-center justify-center gap-2 p-3 bg-slate-900 border border-dashed rounded-xl cursor-pointer transition text-xs ${
+                          slipFile
+                            ? 'border-emerald-500 text-emerald-300 bg-emerald-500/5'
+                            : 'border-rose-500/50 hover:border-emerald-500 text-slate-300'
+                        }`}
+                      >
                         <Upload className="w-4 h-4 text-emerald-400" />
-                        <span>{slipFileName ? slipFileName : 'Choose Slip Image (PNG, JPG)'}</span>
-                        <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+                        <span className="font-bold">
+                          {slipFileName ? slipFileName : 'Select Receipt Image (PNG, JPG) — Mandatory'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          required={method === 'bank_transfer'}
+                          onChange={handleFileUpload}
+                          className="hidden"
+                        />
                       </label>
                       {slipFile && (
-                        <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
-                          <CheckCircle2 className="w-4 h-4" /> Ready
+                        <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px] shrink-0">
+                          <CheckCircle2 className="w-4 h-4" /> Attached
                         </span>
                       )}
                     </div>
+
+                    {slipFile ? (
+                      <div className="mt-2.5 p-2 bg-slate-900 border border-emerald-500/40 rounded-xl flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <img
+                            src={slipFile}
+                            alt="Uploaded Deposit Receipt"
+                            className="w-12 h-12 rounded-lg object-cover border border-slate-700 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <span className="text-[11px] font-black text-emerald-400 block truncate">
+                              ✓ Receipt Ready for Admin Verification
+                            </span>
+                            <span className="text-[10px] text-slate-400 truncate block">
+                              {slipFileName}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlipFile(null);
+                            setSlipFileName('');
+                          }}
+                          className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[10px] font-bold cursor-pointer shrink-0"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-rose-400 font-semibold mt-1">
+                        * Please attach a photo or screenshot of your transfer receipt to Account 8020510080 (Deiyandara) before submitting.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
 
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 cursor-pointer flex items-center justify-center gap-2"
+                disabled={method === 'bank_transfer' && !slipFile}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
               >
                 <ArrowDownCircle className="w-4 h-4" />
                 {method === 'bank_transfer'
-                  ? 'SUBMIT SLIP FOR ADMIN APPROVAL'
+                  ? !slipFile
+                    ? 'UPLOAD RECEIPT TO SUBMIT DEPOSIT'
+                    : 'SUBMIT RECEIPT FOR ADMIN APPROVAL'
                   : isFirstDepositEligible
                   ? `DEPOSIT Rs. ${amount.toLocaleString()} + GET Rs. ${amount.toLocaleString()} FREE BONUS`
                   : `CONFIRM DEPOSIT (Rs. ${amount.toLocaleString()} LKR)`}
@@ -745,11 +821,10 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 <label className="font-bold text-slate-300 block mb-2">
                   Select Payout Method:
                 </label>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
                   {[
                     { id: 'cash_agent', label: 'Cash Agent', icon: '🤝' },
                     { id: 'bank_transfer', label: 'Bank Transfer', icon: '🏦' },
-                    { id: 'crypto', label: 'USDT TRC20', icon: '⚡️' },
                   ].map((m) => (
                     <button
                       key={m.id}
@@ -793,8 +868,6 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 <label className="font-bold text-slate-300 block mb-1">
                   {method === 'bank_transfer'
                     ? 'Bank Account Number'
-                    : method === 'crypto'
-                    ? 'USDT TRC20 Wallet Address'
                     : 'Your WhatsApp / Mobile Number (For Cash Agent)'}
                 </label>
                 <input
@@ -803,8 +876,6 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                   placeholder={
                     method === 'bank_transfer'
                       ? 'e.g. 8009234120'
-                      : method === 'crypto'
-                      ? 'e.g. T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb'
                       : 'e.g. 077 123 4567'
                   }
                   value={accountNumber}

@@ -48,6 +48,7 @@ import {
   Search,
   Briefcase,
   LogOut,
+  Eye,
 } from 'lucide-react';
 import { playerPatternTracker } from '../services/playerPatternTracker';
 
@@ -86,6 +87,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [selectedUserForBets, setSelectedUserForBets] = useState<string>('ALL');
   const [selectedUserForTx, setSelectedUserForTx] = useState<string>('ALL');
   const [txTypeFilter, setTxTypeFilter] = useState<'ALL' | 'deposit' | 'withdrawal'>('ALL');
+  const [previewReceiptTx, setPreviewReceiptTx] = useState<Transaction | null>(null);
 
   // Balance Editor states
   const [editBalanceUserId, setEditBalanceUserId] = useState<string | null>(null);
@@ -243,13 +245,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const targetUser = allUsers.find((u) => u.id === targetTx.userId) || getCurrentUser();
 
     if (targetTx.type === 'deposit' && decision === 'completed' && targetUser) {
-      const isEligible1st = !targetUser.hasReceivedFirstDepositBonus;
+      const hasPromoRegistered = Boolean(targetUser.referredBy && targetUser.referredBy.trim().length > 0);
+      const isEligible1st = hasPromoRegistered && !targetUser.hasReceivedFirstDepositBonus;
       const bonusToAdd = isEligible1st ? targetTx.amount : 0;
       const updatedUser: User = {
         ...targetUser,
         balance: Number((targetUser.balance + targetTx.amount + bonusToAdd).toFixed(2)),
         bonusBalance: Number(((targetUser.bonusBalance || 0) + bonusToAdd).toFixed(2)),
-        hasReceivedFirstDepositBonus: true,
+        hasReceivedFirstDepositBonus: targetUser.hasReceivedFirstDepositBonus || isEligible1st,
       };
       saveUser(updatedUser);
       if (updatedUser.id === currentUser.id) {
@@ -275,6 +278,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     } else {
       notify(`Transaction ${decision.toUpperCase()}!`);
     }
+    setPreviewReceiptTx((prev) =>
+      prev && prev.id === txId ? { ...prev, status: decision, processedBy: currentUser.username } : prev
+    );
     refreshAll();
   };
 
@@ -1275,7 +1281,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </div>
 
               <div className="border border-slate-700/80 rounded-xl overflow-x-auto bg-slate-950 shadow-inner">
-                <table className="w-full min-w-[860px] text-left border-collapse text-xs">
+                <table className="w-full min-w-[960px] text-left border-collapse text-xs">
                   <thead>
                     <tr className="border-b border-slate-700 text-[11px] uppercase tracking-wider font-black text-slate-300 bg-slate-900">
                       <th className="p-3 border-r border-slate-800 w-10 text-center">#</th>
@@ -1283,6 +1289,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       <th className="p-3 border-r border-slate-800">Username</th>
                       <th className="p-3 border-r border-slate-800">Type</th>
                       <th className="p-3 border-r border-slate-800">Method &amp; Details</th>
+                      <th className="p-3 border-r border-slate-800">Receipt Slip</th>
                       <th className="p-3 border-r border-slate-800">Amount (LKR)</th>
                       <th className="p-3 border-r border-slate-800">1st Deposit Bonus</th>
                       <th className="p-3 border-r border-slate-800">Status</th>
@@ -1292,7 +1299,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <tbody className="divide-y divide-slate-800">
                     {filteredTransactions.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="p-6 text-center text-slate-500">
+                        <td colSpan={10} className="p-6 text-center text-slate-500">
                           No deposit or withdrawal transactions found for this filter.
                         </td>
                       </tr>
@@ -1324,6 +1331,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 {tx.method.replace('_', ' ')}
                               </span>
                               <span className="text-[10px] text-slate-400">{tx.accountDetails}</span>
+                            </td>
+                            <td className="p-3 border-r border-slate-800/80">
+                              {tx.receiptImage ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewReceiptTx(tx)}
+                                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] cursor-pointer transition-all"
+                                >
+                                  <img
+                                    src={tx.receiptImage}
+                                    alt="Receipt"
+                                    className="w-7 h-7 rounded object-cover border border-emerald-500/40 shrink-0"
+                                  />
+                                  <span className="flex items-center gap-1 whitespace-nowrap">
+                                    <Eye className="w-3.5 h-3.5" /> View Receipt
+                                  </span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-500 italic">No receipt</span>
+                              )}
                             </td>
                             <td className="p-3 border-r border-slate-800/80 font-mono font-black text-white">
                               Rs. {tx.amount.toLocaleString()}
@@ -2162,6 +2189,109 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             );
           })()}
         </div>
+
+        {/* Receipt Viewer & Approval Modal */}
+        {previewReceiptTx && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-950">
+                <div>
+                  <h4 className="font-black text-white text-sm flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-emerald-400" />
+                    Deposit Receipt Verification
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    User: <span className="text-white font-bold">{previewReceiptTx.username || previewReceiptTx.userId}</span> • Amount:{' '}
+                    <span className="text-emerald-400 font-mono font-black">
+                      Rs. {previewReceiptTx.amount.toLocaleString()}
+                    </span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewReceiptTx(null)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-3 max-h-[75vh] overflow-y-auto">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Account &amp; Reference:</span>
+                    <span className="text-white font-mono font-bold">{previewReceiptTx.accountDetails}</span>
+                  </div>
+                  {previewReceiptTx.receiptFileName && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Uploaded File:</span>
+                      <span className="text-slate-300 font-mono">{previewReceiptTx.receiptFileName}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Status:</span>
+                    <span
+                      className={`font-black uppercase ${
+                        previewReceiptTx.status === 'completed'
+                          ? 'text-emerald-400'
+                          : previewReceiptTx.status === 'pending'
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }`}
+                    >
+                      {previewReceiptTx.status}
+                    </span>
+                  </div>
+                </div>
+
+                {previewReceiptTx.receiptImage ? (
+                  <div className="rounded-xl overflow-hidden border border-slate-700 bg-slate-950 flex items-center justify-center p-2">
+                    <img
+                      src={previewReceiptTx.receiptImage}
+                      alt="Bank Transfer Receipt"
+                      className="max-h-[420px] w-auto object-contain rounded-lg"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-slate-500 text-xs">
+                    No receipt image attached to this transaction.
+                  </div>
+                )}
+
+                {previewReceiptTx.status === 'pending' ? (
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTransactionDecision(previewReceiptTx.id, 'completed');
+                        setPreviewReceiptTx(null);
+                      }}
+                      className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> Approve Deposit (Rs.{' '}
+                      {previewReceiptTx.amount.toLocaleString()})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTransactionDecision(previewReceiptTx.id, 'rejected');
+                        setPreviewReceiptTx(null);
+                      }}
+                      className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4" /> Reject Deposit
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center text-xs text-slate-400 pt-1">
+                    Transaction already {previewReceiptTx.status.toUpperCase()}
+                    {previewReceiptTx.processedBy ? ` by ${previewReceiptTx.processedBy}` : ''}.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

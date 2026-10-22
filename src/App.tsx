@@ -82,8 +82,8 @@ export default function App() {
   const [currentUser, setCurrentUserState] = useState<User>(getCurrentUser());
   const [activePage, setActivePage] = useState<'lobby' | 'game' | 'sports'>('lobby');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('balloon_theme_mode');
-    return saved === 'dark' || saved === 'light' ? saved : 'light';
+    const saved = localStorage.getItem('lionbet_theme_mode_v2');
+    return saved === 'dark' || saved === 'light' ? saved : 'dark';
   });
   const [adminSettings, setAdminSettings] = useState<AdminSettings>(getAdminSettings());
   const [history, setHistory] = useState<RoundInfo[]>(getRoundHistory());
@@ -102,7 +102,7 @@ export default function App() {
   const [isMuted, setIsMuted] = useState<boolean>(soundService.isMuted());
 
   useEffect(() => {
-    localStorage.setItem('balloon_theme_mode', theme);
+    localStorage.setItem('lionbet_theme_mode_v2', theme);
     const root = document.documentElement;
     if (theme === 'light') {
       root.classList.add('theme-light');

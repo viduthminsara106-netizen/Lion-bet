@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { LION_BET_LOGO_URL } from '../services/brandAssets';
 import {
   User,
   UserRole,
@@ -594,7 +595,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-slate-950 border border-amber-500/60 overflow-hidden shrink-0">
               <img
-                src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+                src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
                 className="w-full h-full object-cover"
               />

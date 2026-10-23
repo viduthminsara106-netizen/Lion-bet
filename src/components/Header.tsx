@@ -1,5 +1,6 @@
 import React from 'react';
 import { User } from '../types/game';
+import { LION_BET_LOGO_URL } from '../services/brandAssets';
 import {
   Volume2,
   VolumeX,
@@ -116,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Lion Bet Official Logo Image */}
             <div className="relative flex items-center justify-center w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-slate-950 border border-amber-500/60 shadow-md shadow-amber-500/20 select-none shrink-0 group-hover:scale-105 transition overflow-hidden">
               <img
-                src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+                src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
                 className="w-full h-full object-cover"
               />

@@ -1232,6 +1232,27 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
     }
   });
 
+  // Serve fallback SVG artwork for any legacy /assets/aistudio/* requests
+  app.get('/assets/aistudio/:filename', async (req, res) => {
+    try {
+      const { LION_BET_LOGO_SVG, BALLOON_CRASH_COVER_SVG, BALLOON_CRASH_BG_SVG } = await import(
+        './src/services/brandAssets'
+      );
+      const name = String(req.params.filename || '');
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      if (name.includes('d88c81fa')) {
+        return res.send(BALLOON_CRASH_COVER_SVG.trim());
+      }
+      if (name.includes('fe148211')) {
+        return res.send(BALLOON_CRASH_BG_SVG.trim());
+      }
+      return res.send(LION_BET_LOGO_SVG.trim());
+    } catch {
+      return res.status(404).end();
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

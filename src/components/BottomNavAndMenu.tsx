@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, BetRecord, Transaction, SportsBetSlip } from '../types/game';
+import { LION_BET_LOGO_URL } from '../services/brandAssets';
 import {
   getUsers,
   getTransactions,
@@ -91,7 +92,7 @@ export const LionBetSiteLoader: React.FC<{ onFinished: () => void }> = ({ onFini
         {/* Logo Emblem */}
         <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-slate-900 border-2 border-amber-500/70 p-1.5 shadow-2xl mb-5 overflow-hidden">
           <img
-            src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+            src={LION_BET_LOGO_URL}
             alt="Lion Bet"
             className="w-full h-full object-cover rounded-2xl"
           />
@@ -474,7 +475,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
             ) : (
               <div className="w-10 h-10 rounded-xl bg-slate-900 border border-amber-500/50 overflow-hidden shrink-0">
                 <img
-                  src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+                  src={LION_BET_LOGO_URL}
                   alt="Lion Bet"
                   className="w-full h-full object-cover"
                 />

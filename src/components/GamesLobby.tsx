@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { User } from '../types/game';
 import { getTimeBasedCrashCrowd } from '../services/storage';
 import {
+  LION_BET_LOGO_URL,
+  BALLOON_CRASH_LOGO_URL,
+  BALLOON_CRASH_BG_URL,
+  WORLD_SPORTS_COVER_URL,
+  COMING_SOON_GAME_COVERS,
+} from '../services/brandAssets';
+import {
   Play,
   Flame,
   ShieldCheck,
@@ -195,17 +202,22 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       ? COMING_SOON_GAMES
       : COMING_SOON_GAMES.filter((g) => g.category === selectedCategory);
 
-  const BALLOON_CRASH_BG_IMAGE =
-    '/assets/aistudio/file_00000000fe1482118762f82b861e2e0b_d850c082.png';
-  const BALLOON_CRASH_LOGO =
-    '/assets/aistudio/file_00000000d88c81fa88537bb2d9649c3d_569013b0.png';
+  const BALLOON_CRASH_BG_IMAGE = BALLOON_CRASH_BG_URL;
+  const BALLOON_CRASH_LOGO = BALLOON_CRASH_LOGO_URL;
 
   const renderSportsBettingCard = () => (
     <div
       onClick={() => onSelectSportsBetting?.()}
       className="group relative rounded-2xl overflow-hidden border-2 border-emerald-500/70 hover:border-emerald-400 bg-slate-900 shadow-lg hover:shadow-emerald-500/25 transition-all duration-200 cursor-pointer flex flex-col justify-between"
     >
-      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-gradient-to-b from-emerald-950 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-3 text-center">
+      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#020617] flex flex-col items-center justify-center text-center">
+        <img
+          src={WORLD_SPORTS_COVER_URL}
+          alt="World Sports Betting"
+          className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-500"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-transparent to-slate-950/35 pointer-events-none" />
+
         {/* Top Live Badge + Green Online Count Below It */}
         <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 z-10">
           <div className="flex flex-col items-start gap-1">
@@ -222,16 +234,6 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           <span className="px-1.5 py-0.5 rounded-md bg-slate-950/90 border border-emerald-400/60 text-emerald-300 text-[8px] font-black uppercase shadow">
             BET SLIP
           </span>
-        </div>
-
-        <div className="text-4xl mb-2 transform group-hover:scale-110 transition-transform duration-300">
-          🏏⚽
-        </div>
-        <div className="text-xs font-black text-white uppercase tracking-wider">
-          WORLD MATCHES
-        </div>
-        <div className="text-[10px] font-bold text-emerald-400 mt-0.5">
-          Cricket • Football • Tennis
         </div>
 
         <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between z-10">
@@ -276,7 +278,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         <img
           src={BALLOON_CRASH_LOGO}
           alt="Balloon Crash"
-          className="w-full h-full object-contain object-center p-1 transform group-hover:scale-105 transition-transform duration-500"
+          className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-500"
         />
 
         {/* Subtle bottom vignette for crisp badge contrast */}
@@ -545,38 +547,48 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
     </div>
   );
 
-  const renderComingSoonCard = (game: ComingSoonGame) => (
-    <div
-      key={game.id}
-      className="rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-900/50 flex flex-col justify-between opacity-75 hover:opacity-90 transition"
-    >
+  const renderComingSoonCard = (game: ComingSoonGame) => {
+    const coverImg = COMING_SOON_GAME_COVERS[game.id];
+    return (
       <div
-        className={`relative w-full aspect-[3/4] bg-gradient-to-b ${game.gradient} flex flex-col items-center justify-center p-3 text-center select-none`}
+        key={game.id}
+        className="group rounded-2xl overflow-hidden border border-slate-800/80 hover:border-amber-500/50 bg-slate-900/80 flex flex-col justify-between transition shadow-md"
       >
-        <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/70 border border-slate-700/70 text-[8px] font-bold text-slate-300 uppercase">
-          {game.categoryLabel}
-        </span>
-        <Lock className="w-3.5 h-3.5 text-slate-500 absolute top-2.5 right-2.5" />
-        <div className="text-3xl mb-1.5">{game.icon}</div>
-        <span className={`text-[9px] font-black uppercase tracking-wider ${game.accentText}`}>
-          COMING SOON
-        </span>
-      </div>
-      <div className="p-2.5 bg-slate-950 flex flex-col gap-2">
-        <div>
-          <h3 className="text-xs sm:text-sm font-black text-slate-300 truncate">
-            {game.title}
-          </h3>
-          <span className="text-[10px] text-slate-500 font-bold block">
-            {game.subtitle}
+        <div
+          className={`relative w-full aspect-[3/4] bg-gradient-to-b ${game.gradient} flex flex-col items-center justify-center overflow-hidden select-none`}
+        >
+          {coverImg && (
+            <img
+              src={coverImg}
+              alt={game.title}
+              className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-500"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-transparent to-slate-950/35 pointer-events-none" />
+          <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-slate-950/85 border border-slate-700/80 text-[8px] font-bold text-slate-200 uppercase z-10">
+            {game.categoryLabel}
+          </span>
+          <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-[8px] font-black text-amber-300 uppercase flex items-center gap-1 z-10">
+            <Lock className="w-2.5 h-2.5 text-amber-400" />
+            SOON
           </span>
         </div>
-        <div className="w-full py-2 rounded-xl bg-slate-900 border border-slate-800 text-center text-[10px] font-bold text-slate-500">
-          Soon
+        <div className="p-2.5 bg-slate-950 flex flex-col gap-2">
+          <div>
+            <h3 className="text-xs sm:text-sm font-black text-slate-200 truncate">
+              {game.title}
+            </h3>
+            <span className="text-[10px] text-slate-400 font-bold block">
+              {game.subtitle}
+            </span>
+          </div>
+          <div className="w-full py-2 rounded-xl bg-slate-900 border border-slate-800 text-center text-[10px] font-bold text-amber-400/80">
+            Coming Soon
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="flex-1 w-full max-w-6xl mx-auto px-3 sm:px-6 py-5 sm:py-7 pb-24 space-y-6 relative">
@@ -585,7 +597,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           ===================================================================== */}
       {isLoadingGame && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none animate-fade-in overflow-hidden">
-          {/* Full-Screen Balloon Crash Background Image (Unchanged) */}
+          {/* Full-Screen Balloon Crash Background Image */}
           <img
             src={BALLOON_CRASH_BG_IMAGE}
             alt="Balloon Crash Loading Background"
@@ -603,7 +615,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               <img
                 src={BALLOON_CRASH_LOGO}
                 alt="Balloon Crash Logo"
-                className="w-full h-full object-contain"
+                className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/15 rounded-2xl pointer-events-none" />
               <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
@@ -700,7 +712,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-slate-950 border border-amber-500/60 shadow-lg shadow-amber-500/20 overflow-hidden shrink-0">
             <img
-              src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+              src={LION_BET_LOGO_URL}
               alt="Lion Bet Logo"
               className="w-full h-full object-cover"
             />

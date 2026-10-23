@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, Transaction, PaymentMethod } from '../types/game';
+import { LION_BET_LOGO_URL } from '../services/brandAssets';
 import {
   addTransaction,
   getTransactions,
@@ -411,7 +412,7 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-slate-950 border border-amber-500/60 overflow-hidden shrink-0">
               <img
-                src="/assets/aistudio/file_0000000012b48211a458c023cc759725_1a4c4c4a.png"
+                src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
                 className="w-full h-full object-cover"
               />

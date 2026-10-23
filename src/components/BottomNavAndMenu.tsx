@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { User, BetRecord, Transaction, SportsBetSlip } from '../types/game';
-import { getTransactions, getBetHistory, saveUser, setCurrentUser } from '../services/storage';
+import {
+  getUsers,
+  getTransactions,
+  getBetHistory,
+  saveUser,
+  setCurrentUser,
+  getReferredUsersList,
+  syncUsersWithServer,
+} from '../services/storage';
 import {
   Home,
   Ticket,
@@ -296,6 +304,10 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
   const [supportMessage, setSupportMessage] = useState('');
   const [supportSent, setSupportSent] = useState(false);
 
+  const [referredMembers, setReferredMembers] = useState<User[]>(() =>
+    getReferredUsersList(currentUser.referralCode)
+  );
+
   useEffect(() => {
     if (!isOpen) {
       setSubView('main');
@@ -304,6 +316,17 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
       setSupportSent(false);
       return;
     }
+
+    const refreshMenuData = async () => {
+      await syncUsersWithServer().catch(() => {});
+      const latestMe = getUsers().find((u) => u.id === currentUser.id);
+      if (latestMe) {
+        onUserUpdated?.(latestMe);
+      }
+      setReferredMembers(getReferredUsersList((latestMe || currentUser).referralCode));
+    };
+    refreshMenuData();
+
     const allTx = getTransactions().filter((t) => t.userId === currentUser.id);
     setTransactions(allTx);
 
@@ -321,7 +344,7 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
     } catch {
       setSportsSlips([]);
     }
-  }, [isOpen, currentUser.id]);
+  }, [isOpen, currentUser.id, currentUser.referralCode]);
 
   if (!isOpen) return null;
 
@@ -357,18 +380,41 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
     }
 
     if (!currentUser.hasReceivedFirstDepositBonus) {
+      const users = getUsers();
+      const matchedReferrer = users.find(
+        (u) =>
+          u.id !== currentUser.id &&
+          (u.referralCode.trim().toUpperCase() === clean ||
+            u.username.trim().toUpperCase() === clean)
+      );
+      const canonicalCode = matchedReferrer
+        ? matchedReferrer.referralCode.trim().toUpperCase()
+        : clean;
+
       const updatedUser: User = {
         ...currentUser,
-        referredBy: clean,
+        referredBy: canonicalCode,
       };
       saveUser(updatedUser);
+      if (matchedReferrer) {
+        const actualCount = getUsers().filter(
+          (m) =>
+            m.id !== matchedReferrer.id &&
+            m.referredBy &&
+            m.referredBy.trim().toUpperCase() === canonicalCode
+        ).length;
+        saveUser({
+          ...matchedReferrer,
+          referralCount: Math.max((matchedReferrer.referralCount || 0) + 1, actualCount),
+        });
+      }
       setCurrentUser(updatedUser);
       onUserUpdated?.(updatedUser);
       localStorage.setItem(redeemedKey, '1');
       setPromoCodeInput('');
       setPromoFeedback({
         type: 'success',
-        text: `Promocode "${clean}" linked! Make your 1st Deposit now to receive your 100% First Deposit Bonus!`,
+        text: `Promocode "${canonicalCode}" linked! Make your 1st Deposit now to receive your 100% First Deposit Bonus!`,
       });
       return;
     }
@@ -1479,22 +1525,81 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
                   <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
                     <span className="text-[10px] text-slate-400 block">Team Members</span>
                     <span className="text-sm font-black text-white">
-                      {currentUser.referralCount}
+                      {Math.max(currentUser.referralCount || 0, referredMembers.length)}
                     </span>
                   </div>
                   <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
                     <span className="text-[10px] text-slate-400 block">Total Earned</span>
                     <span className="text-sm font-black text-emerald-400">
-                      Rs. {currentUser.referralEarnings.toLocaleString()}
+                      Rs. {(currentUser.referralEarnings || 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
                     <span className="text-[10px] text-slate-400 block">Unclaimed</span>
                     <span className="text-sm font-black text-amber-400">
-                      Rs. {currentUser.unclaimedReferralRewards.toLocaleString()}
+                      Rs. {(currentUser.unclaimedReferralRewards || 0).toLocaleString()}
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Referred Team Members Live Tracking List */}
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-white">
+                    Referred Team Members ({referredMembers.length})
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-400">
+                    10% Deposit + 2% Bet Commission
+                  </span>
+                </div>
+                {referredMembers.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-center text-[11px] text-slate-400">
+                    No players have registered with your code ({currentUser.referralCode}) yet. Share your link above to build your team!
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {referredMembers.map((member) => {
+                      const hasDeposited =
+                        Boolean(member.hasReceivedFirstDepositBonus) ||
+                        (member.totalDeposited || 0) > 0 ||
+                        member.balance > 0;
+                      const estComm =
+                        member.commissionGeneratedForReferrer ??
+                        Number(
+                          (
+                            (member.totalDeposited || 0) * 0.1 +
+                            (member.totalWagered || 0) * 0.02
+                          ).toFixed(2)
+                        );
+                      return (
+                        <div
+                          key={member.id}
+                          className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-base">{member.avatar || '🦁'}</span>
+                            <div className="min-w-0">
+                              <div className="font-black text-white truncate">
+                                {member.username}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {hasDeposited ? '✓ Deposited' : 'Registered (Rs. 0)'} · Wagered: Rs.{' '}
+                                {(member.totalWagered || 0).toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right font-mono shrink-0">
+                            <div className="text-[10px] text-slate-400">Commission</div>
+                            <div className="text-xs font-black text-emerald-400">
+                              +Rs. {estComm.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <button

@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CHAT_HISTORY_FILE = path.join(__dirname, '.chat_history.json');
 const CASH_AGENTS_FILE = path.join(__dirname, '.cash_agents.json');
+const USERS_DB_FILE = path.join(__dirname, '.users_db.json');
 
 interface ServerCashAgent {
   id: string;
@@ -56,6 +57,30 @@ function saveCashAgents(agents: ServerCashAgent[]) {
   try {
     const clean = agents.filter((a) => !isFakeAgent(a));
     fs.writeFileSync(CASH_AGENTS_FILE, JSON.stringify(clean, null, 2), 'utf-8');
+  } catch {
+    // ignore write error
+  }
+}
+
+function loadServerUsers(): any[] {
+  try {
+    if (fs.existsSync(USERS_DB_FILE)) {
+      const raw = fs.readFileSync(USERS_DB_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((u) => !isFakeAgent(u));
+      }
+    }
+  } catch {
+    // ignore read error
+  }
+  return [];
+}
+
+function saveServerUsers(users: any[]) {
+  try {
+    const clean = users.filter((u) => u && u.id && !isFakeAgent(u));
+    fs.writeFileSync(USERS_DB_FILE, JSON.stringify(clean, null, 2), 'utf-8');
   } catch {
     // ignore write error
   }
@@ -135,12 +160,68 @@ async function startServer() {
 
   app.use(express.json({ limit: '2mb' }));
 
-  // Shared Server-Authoritative Multi-User Chat State
+  // Shared Server-Authoritative Multi-User Chat State & Users/Referrals DB
   let sharedChatMessages: ServerChatMessage[] = loadChatHistory();
   let cashAgents: ServerCashAgent[] = loadCashAgents();
+  let serverUsers: any[] = loadServerUsers();
   const activePresence = new Map<string, { lastSeen: number; manualOffline?: boolean }>();
   const PRESENCE_TIMEOUT_MS = 45000;
   const sseClients = new Set<express.Response>();
+
+  const recomputeServerReferralCounts = () => {
+    let changed = false;
+    for (const u of serverUsers) {
+      if (!u.referralCode) continue;
+      const codeUpper = String(u.referralCode).toUpperCase();
+      const referredMembers = serverUsers.filter(
+        (m) => m.id !== u.id && String(m.referredBy || '').toUpperCase() === codeUpper
+      );
+      if (referredMembers.length > (u.referralCount || 0)) {
+        u.referralCount = referredMembers.length;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveServerUsers(serverUsers);
+    }
+  };
+
+  // GET /api/users - Sync users and referral tracking across tabs and browsers
+  app.get('/api/users', (_req, res) => {
+    recomputeServerReferralCounts();
+    res.json({ ok: true, users: serverUsers });
+  });
+
+  // POST /api/users - Save or merge user(s) and recalculate referral tracking
+  app.post('/api/users', (req, res) => {
+    const incomingUser = req.body?.user;
+    const incomingUsers = req.body?.users;
+
+    const upsertOne = (u: any) => {
+      if (!u || !u.id || isFakeAgent(u)) return;
+      const idx = serverUsers.findIndex((existing) => existing.id === u.id);
+      if (idx >= 0) {
+        const prev = serverUsers[idx];
+        serverUsers[idx] = {
+          ...prev,
+          ...u,
+          referralCount: Math.max(prev.referralCount || 0, u.referralCount || 0),
+          referralEarnings: Math.max(prev.referralEarnings || 0, u.referralEarnings || 0),
+        };
+      } else {
+        serverUsers.push(u);
+      }
+    };
+
+    if (incomingUser) upsertOne(incomingUser);
+    if (Array.isArray(incomingUsers)) {
+      for (const u of incomingUsers) upsertOne(u);
+    }
+
+    recomputeServerReferralCounts();
+    saveServerUsers(serverUsers);
+    res.json({ ok: true, users: serverUsers });
+  });
 
   const isUserOnlineNow = (
     agent: ServerCashAgent & { adminOnlineStatus?: boolean }

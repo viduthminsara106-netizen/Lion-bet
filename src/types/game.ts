@@ -58,6 +58,8 @@ export interface User {
   unclaimedReferralRewards: number; // In LKR
   totalWagered: number; // In LKR
   totalWon: number; // In LKR
+  totalDeposited?: number; // Total LKR deposited by this user
+  commissionGeneratedForReferrer?: number; // Total LKR commission generated for the referrer
   isBanned: boolean;
   avatar: string;
   agentContact?: string;

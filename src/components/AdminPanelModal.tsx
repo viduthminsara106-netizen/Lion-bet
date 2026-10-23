@@ -23,6 +23,7 @@ import {
   getCashAgentsSync,
   setAgentOnlineStatus,
   CashAgentWithPresence,
+  creditReferrerCommission,
 } from '../services/storage';
 import {
   ShieldCheck,
@@ -254,9 +255,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         bonusBalance: Number(((targetUser.bonusBalance || 0) + bonusToAdd).toFixed(2)),
         hasReceivedFirstDepositBonus: targetUser.hasReceivedFirstDepositBonus || isEligible1st,
       };
-      saveUser(updatedUser);
-      if (updatedUser.id === currentUser.id) {
-        onUserUpdated?.(updatedUser);
+      const { referredUpdated } = creditReferrerCommission(
+        updatedUser,
+        targetTx.amount,
+        'deposit'
+      );
+      saveUser(referredUpdated);
+      if (referredUpdated.id === currentUser.id) {
+        onUserUpdated?.(referredUpdated);
       }
       notify(
         bonusToAdd > 0

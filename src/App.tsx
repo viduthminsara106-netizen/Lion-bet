@@ -34,6 +34,9 @@ import {
   clearUserPresenceOnLogout,
   fetchCashAgentsWithPresence,
   getTimeBasedCrashCrowd,
+  syncUsersWithServer,
+  getUrlReferralCode,
+  creditReferrerCommission,
 } from './services/storage';
 import { soundService } from './services/sound';
 import {
@@ -117,18 +120,36 @@ export default function App() {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  // Real-time presence heartbeat for logged-in user/agent on the site
+  // Real-time presence heartbeat & referral tracking sync for logged-in user/agent on the site
   useEffect(() => {
     if (!currentUser?.id) return;
     recordUserPresenceHeartbeat(currentUser);
     fetchCashAgentsWithPresence().catch(() => {});
 
+    const syncUserAndReferrals = async () => {
+      await syncUsersWithServer().catch(() => {});
+      const latestMe = getUsers().find((u) => u.id === currentUser.id);
+      if (
+        latestMe &&
+        (latestMe.referralCount !== currentUser.referralCount ||
+          latestMe.referralEarnings !== currentUser.referralEarnings ||
+          latestMe.unclaimedReferralRewards !== currentUser.unclaimedReferralRewards ||
+          latestMe.balance !== currentUser.balance)
+      ) {
+        currentUserRef.current = latestMe;
+        setCurrentUserState(latestMe);
+      }
+    };
+
+    syncUserAndReferrals();
+
     const interval = setInterval(() => {
-      recordUserPresenceHeartbeat(currentUser);
-    }, 10000);
+      recordUserPresenceHeartbeat(currentUserRef.current);
+      syncUserAndReferrals();
+    }, 6000);
 
     return () => clearInterval(interval);
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Game Engine States
   const [status, setStatus] = useState<GameStatus>('WAITING');
@@ -203,7 +224,7 @@ export default function App() {
   // Modal Dialogs
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(() => !hasActiveAuthSession());
   const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>('register');
-  const [authInitialPromo, setAuthInitialPromo] = useState<string>('');
+  const [authInitialPromo, setAuthInitialPromo] = useState<string>(() => getUrlReferralCode());
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isReferralOpen, setIsReferralOpen] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
@@ -250,16 +271,14 @@ export default function App() {
   // Automatically open Register screen with Promocode auto-filled when a referral link (?ref=CODE or ?promo=CODE) is opened
   useEffect(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const refCode = params.get('ref') || params.get('promo') || params.get('referral');
-      if (refCode && refCode.trim()) {
-        const clean = refCode.trim().toUpperCase();
-        localStorage.setItem('lionbet_pending_ref_code', clean);
+      const refCode = getUrlReferralCode();
+      if (refCode) {
+        localStorage.setItem('lionbet_pending_ref_code', refCode);
         clearCurrentUserSession();
         const unauthUser = getCurrentUser();
         setCurrentUserState(unauthUser);
         setIsAuthenticated(false);
-        setAuthInitialPromo(clean);
+        setAuthInitialPromo(refCode);
         setAuthInitialTab('register');
         setIsAuthOpen(true);
       }
@@ -1527,9 +1546,10 @@ export default function App() {
       bonusBalance: Math.max(0, Number(((curUser.bonusBalance || 0) - bonusUsed).toFixed(2))),
       totalWagered: Number((curUser.totalWagered + amount).toFixed(2)),
     };
-    currentUserRef.current = updatedUser;
-    setCurrentUserState(updatedUser);
-    saveUser(updatedUser);
+    const { referredUpdated } = creditReferrerCommission(updatedUser, amount, 'bet');
+    currentUserRef.current = referredUpdated;
+    setCurrentUserState(referredUpdated);
+    saveUser(referredUpdated);
 
     const isCurrentlyFlying = status === 'FLYING';
 
@@ -1872,9 +1892,13 @@ export default function App() {
               totalWagered: Number((latest.totalWagered + wagerDelta).toFixed(2)),
               totalWon: Number((latest.totalWon + wonDelta).toFixed(2)),
             };
-            currentUserRef.current = updated;
-            setCurrentUserState(updated);
-            saveUser(updated);
+            const finalUpdated =
+              wagerDelta > 0
+                ? creditReferrerCommission(updated, wagerDelta, 'bet').referredUpdated
+                : updated;
+            currentUserRef.current = finalUpdated;
+            setCurrentUserState(finalUpdated);
+            saveUser(finalUpdated);
             if (wonDelta > 0) {
               soundService.playCashout(true);
               pushNotification({

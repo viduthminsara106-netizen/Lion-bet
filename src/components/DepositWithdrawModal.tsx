@@ -7,6 +7,7 @@ import {
   CashAgentWithPresence,
   getCashAgentsSync,
   fetchCashAgentsWithPresence,
+  creditReferrerCommission,
 } from '../services/storage';
 import { soundService } from '../services/sound';
 import {
@@ -170,8 +171,9 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
         bonusBalance: Number(((currentUser.bonusBalance || 0) + firstDepositBonusAmount).toFixed(2)),
         hasReceivedFirstDepositBonus: true,
       };
-      saveUser(updatedUser);
-      onBalanceUpdated(updatedUser);
+      const { referredUpdated } = creditReferrerCommission(updatedUser, amount, 'deposit');
+      saveUser(referredUpdated);
+      onBalanceUpdated(referredUpdated);
       soundService.playCashout(true);
 
       if (firstDepositBonusAmount > 0) {

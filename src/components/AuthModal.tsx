@@ -6,6 +6,8 @@ import {
   setCurrentUser,
   fetchCashAgentsWithPresence,
   recordUserPresenceHeartbeat,
+  syncUsersWithServer,
+  getUrlReferralCode,
 } from '../services/storage';
 import {
   LogIn,
@@ -51,7 +53,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [promoCode, setPromoCode] = useState(initialPromoCode);
+  const [promoCode, setPromoCode] = useState(() => {
+    try {
+      return (
+        getUrlReferralCode() ||
+        initialPromoCode ||
+        localStorage.getItem('lionbet_pending_ref_code') ||
+        ''
+      )
+        .trim()
+        .toUpperCase();
+    } catch {
+      return initialPromoCode;
+    }
+  });
   const [showRegPassword, setShowRegPassword] = useState(false);
 
   // Shared Remember Me State
@@ -59,25 +74,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const [error, setError] = useState<string | null>(null);
 
-  // Load remembered credentials, check referral link promo code, & sync Admin-created Cash Agents
+  // Load remembered credentials, check referral link promo code, & sync Admin-created Cash Agents + Users
   useEffect(() => {
     if (isOpen) {
       fetchCashAgentsWithPresence().catch(() => {});
+      syncUsersWithServer().catch(() => {});
       setTab(initialTab);
     }
 
     // Check URL or prop for referral / promo code auto-fill
     try {
-      const params = new URLSearchParams(window.location.search);
       const urlRef =
-        params.get('ref') ||
-        params.get('promo') ||
-        params.get('referral') ||
+        getUrlReferralCode() ||
         initialPromoCode ||
         localStorage.getItem('lionbet_pending_ref_code') ||
         '';
       if (urlRef.trim()) {
-        setPromoCode(urlRef.trim().toUpperCase());
+        const cleanRef = urlRef.trim().toUpperCase();
+        localStorage.setItem('lionbet_pending_ref_code', cleanRef);
+        setPromoCode(cleanRef);
         setTab('register');
       }
     } catch {}
@@ -104,8 +119,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanId = loginIdentifier.trim();
     const cleanPhone = normalizePhone(cleanId);
 
-    // Sync latest Admin-created Cash Agents from server before checking credentials
-    await fetchCashAgentsWithPresence().catch(() => {});
+    // Sync latest Admin-created Cash Agents & Users/Referrals from server before checking credentials
+    await Promise.all([
+      fetchCashAgentsWithPresence().catch(() => {}),
+      syncUsersWithServer().catch(() => {}),
+    ]);
     const users = getUsers();
 
     // Direct Admin Credentials Check: 0711452778 / 12345678
@@ -190,7 +208,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     onClose();
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -219,6 +237,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    await syncUsersWithServer().catch(() => {});
     const users = getUsers();
     if (
       trimmedMobile === '0711452778' ||
@@ -241,18 +260,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     // Check Promo / Referral Code:
     // Only users who register with a Promo / Referral Code qualify for the 100% 1st Deposit Bonus after depositing!
     // Initial balance is strictly Rs. 0.00 until the user deposits or an Admin/Cash Agent updates their balance.
-    let referredByUser: User | undefined;
     const cleanPromo = promoCode.trim().toUpperCase();
-    if (cleanPromo) {
-      referredByUser = users.find((u) => u.referralCode.toUpperCase() === cleanPromo);
-      if (referredByUser) {
-        referredByUser.referralCount += 1;
-        saveUser(referredByUser);
-      }
-    }
+    const referredByUser = cleanPromo
+      ? users.find(
+          (u) =>
+            u.referralCode.trim().toUpperCase() === cleanPromo ||
+            u.username.trim().toUpperCase() === cleanPromo
+        )
+      : undefined;
 
     const avatars = ['🦁', '🪂', '💎', '🧑‍🚀', '⚡️', '👑', '🚀', '🎯', '🍀'];
     const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)];
+
+    const canonicalReferredBy = referredByUser
+      ? referredByUser.referralCode.trim().toUpperCase()
+      : cleanPromo
+      ? cleanPromo
+      : undefined;
 
     const newUser: User = {
       id: 'user_' + Date.now(),
@@ -265,12 +289,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       bonusBalance: 0.0,
       hasReceivedFirstDepositBonus: false,
       referralCode: newReferralCode,
-      referredBy: referredByUser?.referralCode || (cleanPromo ? cleanPromo : undefined),
+      referredBy: canonicalReferredBy,
       referralCount: 0,
       referralEarnings: 0,
       unclaimedReferralRewards: 0,
       totalWagered: 0,
       totalWon: 0,
+      totalDeposited: 0,
+      commissionGeneratedForReferrer: 0,
       isBanned: false,
       avatar: randomAvatar,
       createdAt: Date.now(),
@@ -289,7 +315,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       localStorage.removeItem(REMEMBER_STORAGE_KEY);
     }
 
+    // Save the newly registered user first
     saveUser(newUser);
+
+    // Update the referrer's referral count & sync to server
+    if (referredByUser) {
+      const latestUsers = getUsers();
+      const actualReferredCount = latestUsers.filter(
+        (m) =>
+          m.id !== referredByUser.id &&
+          m.referredBy &&
+          m.referredBy.trim().toUpperCase() === referredByUser.referralCode.trim().toUpperCase()
+      ).length;
+      const updatedReferrer: User = {
+        ...referredByUser,
+        referralCount: Math.max((referredByUser.referralCount || 0) + 1, actualReferredCount),
+      };
+      saveUser(updatedReferrer);
+    }
+
     setCurrentUser(newUser);
     onLoginSuccess(newUser);
     onClose();

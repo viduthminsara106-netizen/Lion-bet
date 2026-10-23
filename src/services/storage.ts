@@ -459,6 +459,19 @@ export function getUsers(): User[] {
       } catch {}
     }
 
+    // Dynamically sync referralCount with actual referred accounts
+    for (const u of migrated) {
+      if (!u.referralCode) continue;
+      const codeUpper = u.referralCode.trim().toUpperCase();
+      const referredMembers = migrated.filter(
+        (m) => m.id !== u.id && m.referredBy && m.referredBy.trim().toUpperCase() === codeUpper
+      );
+      if (referredMembers.length > (u.referralCount || 0)) {
+        u.referralCount = referredMembers.length;
+        updated = true;
+      }
+    }
+
     if (updated) {
       localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(migrated));
     }
@@ -477,12 +490,39 @@ export function saveUser(updatedUser: User) {
   } else {
     users.push(updatedUser);
   }
+
+  // Recompute referralCount for all referrers whenever a user is saved
+  for (const u of users) {
+    if (!u.referralCode) continue;
+    const codeUpper = u.referralCode.trim().toUpperCase();
+    const referredMembers = users.filter(
+      (m) => m.id !== u.id && m.referredBy && m.referredBy.trim().toUpperCase() === codeUpper
+    );
+    if (referredMembers.length > (u.referralCount || 0)) {
+      u.referralCount = referredMembers.length;
+    }
+  }
+
   localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 
-  const currentUser = getCurrentUser();
-  if (currentUser && currentUser.id === updatedUser.id) {
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
-  }
+  try {
+    const rawCur = localStorage.getItem(CURRENT_USER_KEY);
+    if (rawCur) {
+      const parsedCur: User = JSON.parse(rawCur);
+      const latestCur = users.find((u) => u.id === parsedCur.id);
+      if (latestCur) {
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestCur));
+      }
+    }
+    window.dispatchEvent(new Event('storage'));
+  } catch {}
+
+  // Sync user & referral data with backend server across tabs/browsers
+  fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user: updatedUser }),
+  }).catch(() => {});
 
   // Sync Cash Agent additions or role updates with server
   fetch('/api/agents', {
@@ -490,6 +530,208 @@ export function saveUser(updatedUser: User) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent: updatedUser }),
   }).catch(() => {});
+}
+
+export async function syncUsersWithServer(): Promise<User[]> {
+  let serverUsers: User[] = [];
+  try {
+    const res = await fetch('/api/users');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.users)) {
+        serverUsers = data.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u));
+      }
+    }
+  } catch {}
+
+  const localUsers = getUsers();
+  const mergedMap = new Map<string, User>();
+
+  for (const lu of localUsers) {
+    mergedMap.set(lu.id, lu);
+  }
+
+  let changed = false;
+  for (const su of serverUsers) {
+    const existing = mergedMap.get(su.id);
+    if (!existing) {
+      mergedMap.set(su.id, su);
+      changed = true;
+    } else {
+      const nextReferralCount = Math.max(existing.referralCount || 0, su.referralCount || 0);
+      const nextReferralEarnings = Math.max(existing.referralEarnings || 0, su.referralEarnings || 0);
+      const nextUnclaimed =
+        su.referralEarnings > existing.referralEarnings
+          ? su.unclaimedReferralRewards
+          : existing.unclaimedReferralRewards;
+      const nextReferredBy = existing.referredBy || su.referredBy;
+      const nextTotalWagered = Math.max(existing.totalWagered || 0, su.totalWagered || 0);
+      const nextTotalDeposited = Math.max(existing.totalDeposited || 0, su.totalDeposited || 0);
+      const nextCommGen = Math.max(
+        existing.commissionGeneratedForReferrer || 0,
+        su.commissionGeneratedForReferrer || 0
+      );
+
+      if (
+        nextReferralCount !== existing.referralCount ||
+        nextReferralEarnings !== existing.referralEarnings ||
+        nextUnclaimed !== existing.unclaimedReferralRewards ||
+        nextReferredBy !== existing.referredBy ||
+        nextTotalWagered !== existing.totalWagered ||
+        nextTotalDeposited !== (existing.totalDeposited || 0) ||
+        nextCommGen !== (existing.commissionGeneratedForReferrer || 0)
+      ) {
+        mergedMap.set(su.id, {
+          ...existing,
+          referralCount: nextReferralCount,
+          referralEarnings: nextReferralEarnings,
+          unclaimedReferralRewards: nextUnclaimed,
+          referredBy: nextReferredBy,
+          totalWagered: nextTotalWagered,
+          totalDeposited: nextTotalDeposited,
+          commissionGeneratedForReferrer: nextCommGen,
+        });
+        changed = true;
+      }
+    }
+  }
+
+  const allUsers = Array.from(mergedMap.values());
+
+  // Recompute referralCount for every user based on actual referred team members
+  for (const u of allUsers) {
+    if (!u.referralCode) continue;
+    const codeUpper = u.referralCode.trim().toUpperCase();
+    const referredMembers = allUsers.filter(
+      (m) => m.id !== u.id && m.referredBy && m.referredBy.trim().toUpperCase() === codeUpper
+    );
+    if (referredMembers.length > (u.referralCount || 0)) {
+      u.referralCount = referredMembers.length;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+    try {
+      const rawCur = localStorage.getItem(CURRENT_USER_KEY);
+      if (rawCur) {
+        const parsedCur: User = JSON.parse(rawCur);
+        const latestCur = allUsers.find((u) => u.id === parsedCur.id);
+        if (latestCur) {
+          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestCur));
+        }
+      }
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
+  }
+
+  // Push any local users not yet on server
+  fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ users: allUsers }),
+  }).catch(() => {});
+
+  return allUsers;
+}
+
+export function getReferredUsersList(referralCode: string): User[] {
+  const clean = (referralCode || '').trim().toUpperCase();
+  if (!clean) return [];
+  const users = getUsers();
+  return users
+    .filter((u) => u.referredBy && u.referredBy.trim().toUpperCase() === clean)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+export function getUrlReferralCode(): string {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery =
+      params.get('ref') ||
+      params.get('promo') ||
+      params.get('referral') ||
+      params.get('code') ||
+      params.get('r') ||
+      '';
+    if (fromQuery.trim()) {
+      return fromQuery.trim().toUpperCase();
+    }
+    if (window.location.hash) {
+      const hashClean = window.location.hash.replace(/^#\/?/, '');
+      const hashParams = new URLSearchParams(hashClean.includes('?') ? hashClean.split('?')[1] : hashClean);
+      const fromHash =
+        hashParams.get('ref') || hashParams.get('promo') || hashParams.get('referral') || '';
+      if (fromHash.trim()) {
+        return fromHash.trim().toUpperCase();
+      }
+    }
+  } catch {}
+  return '';
+}
+
+export function creditReferrerCommission(
+  referredUser: User,
+  amount: number,
+  sourceType: 'deposit' | 'bet'
+): { referrerUpdated: User | null; referredUpdated: User; commissionAmount: number } {
+  if (!referredUser || amount <= 0) {
+    return { referrerUpdated: null, referredUpdated: referredUser, commissionAmount: 0 };
+  }
+
+  const refCode = (referredUser.referredBy || '').trim().toUpperCase();
+  // 10% commission on referred friend's deposits, 2% turnover commission on referred friend's bets
+  const rate = sourceType === 'deposit' ? 0.1 : 0.02;
+  const commissionAmount = refCode ? Number((amount * rate).toFixed(2)) : 0;
+
+  const updatedReferred: User = {
+    ...referredUser,
+    totalDeposited:
+      sourceType === 'deposit'
+        ? Number(((referredUser.totalDeposited || 0) + amount).toFixed(2))
+        : referredUser.totalDeposited || 0,
+    commissionGeneratedForReferrer:
+      commissionAmount > 0
+        ? Number(((referredUser.commissionGeneratedForReferrer || 0) + commissionAmount).toFixed(2))
+        : referredUser.commissionGeneratedForReferrer || 0,
+  };
+  saveUser(updatedReferred);
+
+  if (!refCode || commissionAmount <= 0) {
+    return { referrerUpdated: null, referredUpdated: updatedReferred, commissionAmount: 0 };
+  }
+
+  const users = getUsers();
+  const referrer = users.find(
+    (u) =>
+      u.id !== referredUser.id &&
+      (u.referralCode.trim().toUpperCase() === refCode ||
+        u.username.trim().toUpperCase() === refCode)
+  );
+
+  if (!referrer) {
+    return { referrerUpdated: null, referredUpdated: updatedReferred, commissionAmount: 0 };
+  }
+
+  const referredTeamCount = users.filter(
+    (m) =>
+      m.id !== referrer.id &&
+      m.referredBy &&
+      m.referredBy.trim().toUpperCase() === referrer.referralCode.trim().toUpperCase()
+  ).length;
+
+  const updatedReferrer: User = {
+    ...referrer,
+    referralCount: Math.max(referrer.referralCount || 0, referredTeamCount, 1),
+    referralEarnings: Number(((referrer.referralEarnings || 0) + commissionAmount).toFixed(2)),
+    unclaimedReferralRewards: Number(
+      ((referrer.unclaimedReferralRewards || 0) + commissionAmount).toFixed(2)
+    ),
+  };
+
+  saveUser(updatedReferrer);
+  return { referrerUpdated: updatedReferrer, referredUpdated: updatedReferred, commissionAmount };
 }
 
 export function deleteUser(userId: string) {
@@ -524,6 +766,9 @@ const UNAUTHENTICATED_USER_PLACEHOLDER: User = {
 
 export function hasActiveAuthSession(): boolean {
   try {
+    if (getUrlReferralCode()) {
+      return false;
+    }
     if (localStorage.getItem(AUTH_SESSION_KEY) !== '1') return false;
     const raw = localStorage.getItem(CURRENT_USER_KEY);
     if (!raw) return false;

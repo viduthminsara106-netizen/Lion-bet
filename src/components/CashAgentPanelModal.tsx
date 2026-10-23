@@ -11,6 +11,7 @@ import {
   setAgentOnlineStatus,
   recordUserPresenceHeartbeat,
   fetchCashAgentsWithPresence,
+  creditReferrerCommission,
 } from '../services/storage';
 import {
   ArrowDownCircle,
@@ -172,9 +173,10 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
       hasReceivedFirstDepositBonus: targetUser.hasReceivedFirstDepositBonus || eligibleFirstBonus,
     };
 
-    saveUser(updatedUser);
-    if (updatedUser.id === currentUser.id) {
-      onUserUpdated(updatedUser);
+    const { referredUpdated } = creditReferrerCommission(updatedUser, actionAmount, 'deposit');
+    saveUser(referredUpdated);
+    if (referredUpdated.id === currentUser.id) {
+      onUserUpdated(referredUpdated);
     }
 
     const tx: Transaction = {
@@ -286,9 +288,14 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
         bonusBalance: Number(((targetUser.bonusBalance || 0) + bonusToAdd).toFixed(2)),
         hasReceivedFirstDepositBonus: targetUser.hasReceivedFirstDepositBonus || isEligible1st,
       };
-      saveUser(updatedUser);
-      if (updatedUser.id === currentUser.id) {
-        onUserUpdated(updatedUser);
+      const { referredUpdated } = creditReferrerCommission(
+        updatedUser,
+        targetTx.amount,
+        'deposit'
+      );
+      saveUser(referredUpdated);
+      if (referredUpdated.id === currentUser.id) {
+        onUserUpdated(referredUpdated);
       }
       showToast(
         `Approved Deposit of Rs. ${targetTx.amount.toLocaleString()} LKR for ${targetUser.username}!`

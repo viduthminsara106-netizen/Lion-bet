@@ -1,4 +1,4 @@
-export type GameStatus = 'WAITING' | 'FLYING' | 'BURST' | 'ENDED';
+export type GameStatus = 'WAITING' | 'FLYING' | 'CRASHED';
 
 export type UserRole =
   | 'player'
@@ -8,39 +8,6 @@ export type UserRole =
   | 'withdraw_agent'
   | 'cash_agent';
 
-export type PaymentMethod = 'bank_transfer' | 'cash_agent';
-
-export interface Transaction {
-  id: string;
-  userId: string;
-  username?: string;
-  type: 'deposit' | 'withdrawal';
-  amount: number; // In LKR
-  bonusAdded?: number; // 100% 1st deposit bonus in LKR
-  method: PaymentMethod;
-  accountDetails: string;
-  receiptImage?: string; // Base64 / Data URL of uploaded bank transfer receipt
-  receiptFileName?: string; // File name of uploaded receipt
-  processedBy?: string; // Admin or Cash Agent username
-  status: 'completed' | 'pending' | 'rejected';
-  timestamp: number;
-}
-
-export interface BetRecord {
-  id: string;
-  userId: string;
-  username: string;
-  avatar: string;
-  roundNumber: number;
-  amount: number; // In LKR
-  cashoutMultiplier: number | null; // null if lost/crashed
-  crashPoint: number;
-  winAmount: number; // In LKR (0 if lost)
-  profit: number; // Net profit (+win - amount) or -amount if lost
-  status: 'won' | 'lost';
-  timestamp: number;
-}
-
 export interface User {
   id: string;
   username: string;
@@ -48,22 +15,24 @@ export interface User {
   email: string;
   password?: string;
   role: UserRole;
-  balance: number; // Total Playable Balance in LKR (includes withdrawable + bonusBalance)
-  bonusBalance?: number; // Non-withdrawable bonus balance in LKR (can bet; only profit is withdrawable)
-  hasReceivedFirstDepositBonus?: boolean; // True after 1st deposit 100% bonus is credited
+  balance: number;
+  bonusBalance?: number;
+  hasReceivedFirstDepositBonus?: boolean;
   referralCode: string;
   referredBy?: string;
   referralCount: number;
-  referralEarnings: number; // In LKR
-  unclaimedReferralRewards: number; // In LKR
-  totalWagered: number; // In LKR
-  totalWon: number; // In LKR
-  totalDeposited?: number; // Total LKR deposited by this user
-  commissionGeneratedForReferrer?: number; // Total LKR commission generated for the referrer
+  referralEarnings: number;
+  unclaimedReferralRewards: number;
+  totalWagered: number;
+  totalWon: number;
+  totalDeposited?: number;
+  commissionGeneratedForReferrer?: number;
   isBanned: boolean;
   avatar: string;
   agentContact?: string;
   createdByAdmin?: boolean;
+  adminOnlineStatus?: boolean;
+  updatedAt?: number;
   createdAt: number;
 }
 
@@ -72,36 +41,44 @@ export interface Bet {
   userId: string;
   username: string;
   avatar: string;
-  amount: number; // In LKR
-  autoCashoutAt?: number;
+  amount: number;
+  autoCashout: number | null;
   cashedOut: boolean;
-  cashoutMultiplier?: number;
-  profit?: number; // In LKR
+  cashoutMultiplier: number | null;
+  winAmount: number | null;
+  deckIndex?: 1 | 2;
   isBot?: boolean;
-  passengerId: string;
-  passengerColor: string;
+  passengerColor?: string;
+}
+
+export interface BetRecord {
+  id: string;
+  userId: string;
+  username: string;
+  avatar: string;
+  roundNumber: number;
+  amount: number;
+  cashoutMultiplier: number | null;
+  crashPoint: number;
+  winAmount: number;
+  profit: number;
+  status: 'won' | 'lost';
+  gameName?: string;
+  timestamp: number;
 }
 
 export interface Passenger {
   id: string;
-  name: string;
+  userId: string;
+  username: string;
   avatar: string;
   color: string;
-  isPlayer: boolean;
+  betAmount: number;
   hasJumped: boolean;
-  hasCrashed: boolean;
-  jumpMultiplier?: number;
-  // Parachute animation physics
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  rotation: number;
-  swayOffset: number;
-  parachuteOpenProgress: number; // 0 to 1
-  arcTime: number; // for initial leap arc
-  trail: { x: number; y: number; alpha: number }[];
-  opacity: number;
+  jumpMultiplier: number | null;
+  jumpTime: number | null;
+  winAmount: number | null;
+  seatIndex: number;
 }
 
 export interface RoundBonusWinner {
@@ -109,8 +86,8 @@ export interface RoundBonusWinner {
   username: string;
   avatar: string;
   multiplier: number;
-  winAmount: number; // Original payout in LKR
-  bonusAmount: number; // 100% extra win bonus in LKR
+  winAmount: number;
+  bonusAmount: number;
   roundNumber: number;
 }
 
@@ -124,12 +101,12 @@ export interface RoundInfo {
   nonce: number;
   timestamp: number;
   totalBets: number;
-  totalPayout: number; // In LKR
+  totalPayout: number;
   topBonusWinner?: RoundBonusWinner;
 }
 
 export interface ChatReplyTarget {
-  id: string;
+  messageId: string;
   username: string;
   text: string;
 }
@@ -139,13 +116,13 @@ export interface ChatMessage {
   userId: string;
   username: string;
   avatar: string;
-  role?: UserRole;
   text: string;
   timestamp: number;
-  isSystemWin?: boolean;
-  highlightMultiplier?: number;
+  isSystem?: boolean;
+  isWinShare?: boolean;
+  winMultiplier?: number;
+  winAmount?: number;
   replyTo?: ChatReplyTarget;
-  recipientId?: string;
 }
 
 export type CrashGameId = 'balloon_crash' | 'space_rocket' | 'aviator_jet';
@@ -153,40 +130,43 @@ export type CrashGameId = 'balloon_crash' | 'space_rocket' | 'aviator_jet';
 export interface CrashGameEngineConfig {
   gameId: CrashGameId;
   gameName: string;
-  houseEdge: number; // e.g. 0.22 (22% default for higher loss volatility)
-  earlyCrashProbability: number; // e.g. 0.45 (45% chance of early burst)
-  instant100Probability: number; // e.g. 0.15 (15% chance of direct 1.00x instant burst)
-  minBet: number; // In LKR
-  maxBet: number; // In LKR
-  nextCrashOverride: number | null; // null for fair, or number to force next round crash
-  queuedMultipliers: number[]; // Up to 30 pre-set multipliers queued by Admin for this crash game
+  houseEdge: number;
+  earlyCrashProbability: number;
+  instant100Probability: number;
+  minBet: number;
+  maxBet: number;
+  nextCrashOverride: number | null;
+  queuedMultipliers: number[];
+  isGamePaused: boolean;
+}
+
+export type MinesRiskLevel = 'low' | 'medium' | 'high' | 'extreme';
+
+export interface MinesGameEngineConfig {
+  riskLevel: MinesRiskLevel;
+  loseRatePercent: number; // 0 - 100% extra bomb trap probability on tile reveal
+  houseEdgePercent: number; // 1 - 35% house edge multiplier reduction
+  minBet: number; // Default 10 LKR
+  maxBet: number; // Default 50000 LKR
+  defaultMinesCount: number; // 1 - 24
+  maxMultiplierCap: number; // Max payout multiplier cap
+  firstClickSafe: boolean; // Whether 1st tile click is protected unless forced
+  forceNextClickMine: boolean; // Admin instant trap: next clicked tile is guaranteed bomb
   isGamePaused: boolean;
 }
 
 export interface AdminSettings {
   selectedCrashGameId?: CrashGameId;
-  houseEdge: number; // e.g. 0.22 (22% default for higher loss volatility)
-  earlyCrashProbability: number; // e.g. 0.45 (45% chance of early burst)
-  instant100Probability?: number; // e.g. 0.15 (15% chance of direct 1.00x instant burst)
-  minBet: number; // In LKR
-  maxBet: number; // In LKR
-  nextCrashOverride: number | null; // null for fair, or number to force next round crash
-  queuedMultipliers?: number[]; // Next up to 30 multipliers queued for Balloon Crash
+  houseEdge: number;
+  earlyCrashProbability?: number;
+  instant100Probability?: number;
+  minBet: number;
+  maxBet: number;
+  nextCrashOverride: number | null;
+  queuedMultipliers?: number[];
   isGamePaused: boolean;
   crashGamesConfig?: Record<CrashGameId, CrashGameEngineConfig>;
-}
-
-export interface BetDeckState {
-  amount: number;
-  autoCashoutEnabled: boolean;
-  autoMultiplier: number;
-  autoBetEnabled: boolean; // Enables real auto-bet with balance deduction each round
-  hasPlacedBet: boolean;
-  isQueuedForNext: boolean;
-  cashedOut: boolean;
-  cashoutMultiplier: number | null;
-  winAmount: number | null;
-  bonusPortionUsed?: number; // How much of the active wager came from non-withdrawable bonusBalance
+  minesConfig?: MinesGameEngineConfig;
 }
 
 export interface LeaderboardEntry {
@@ -194,24 +174,42 @@ export interface LeaderboardEntry {
   username: string;
   avatar: string;
   metric: string;
-  value: number; // In LKR
-  multiplier?: number;
+  value: number;
+  multiplier: number;
   badge?: string;
+}
+
+export interface Transaction {
+  id: string;
+  userId: string;
+  username?: string;
+  type: 'deposit' | 'withdrawal';
+  amount: number;
+  bonusAdded?: number;
+  method: 'bank' | 'crypto' | 'ewallet' | 'cash_agent';
+  accountDetails: string;
+  agentId?: string;
+  agentName?: string;
+  processedBy?: string;
+  receiptImage?: string;
+  receiptFileName?: string;
+  status: 'completed' | 'pending' | 'rejected';
+  timestamp: number;
 }
 
 export type SportType = 'cricket' | 'football' | 'tennis' | 'basketball';
 
-export interface MatchMarketOption {
+export interface SportsMarketOption {
   id: string;
   label: string;
   shortLabel: string;
   odds: number;
 }
 
-export interface MatchMarket {
+export interface SportsMarket {
   id: string;
   name: string;
-  options: MatchMarketOption[];
+  options: SportsMarketOption[];
 }
 
 export interface SportsMatch {
@@ -227,12 +225,12 @@ export interface SportsMatch {
   teamBCode: string;
   teamBLogo: string;
   teamBLogoUrl?: string;
-  startsAt: number; // Timestamp (ms) when match starts; Bet Slip open until startsAt
-  status: 'UPCOMING' | 'LIVE' | 'FINISHED';
+  startsAt: number;
+  status: 'UPCOMING' | 'LIVE' | 'LOCKED';
   liveScoreA?: string;
   liveScoreB?: string;
-  livePeriod?: string; // e.g. "14.2 Overs", "64'", "Set 2"
-  markets: MatchMarket[];
+  livePeriod?: string;
+  markets: SportsMarket[];
 }
 
 export interface BetSlipSelection {
@@ -241,7 +239,6 @@ export interface BetSlipSelection {
   tournament: string;
   matchTitle: string;
   startsAt: number;
-  matchStatusAtBet: 'UPCOMING' | 'LIVE';
   marketId: string;
   marketName: string;
   optionId: string;
@@ -253,14 +250,10 @@ export interface SportsBetSlip {
   id: string;
   userId: string;
   username: string;
-  type: 'single' | 'multi';
   selections: BetSlipSelection[];
   totalOdds: number;
-  stake: number; // In LKR
-  potentialWin: number; // In LKR
-  status: 'pending' | 'won' | 'lost' | 'cashed_out';
-  payout: number; // In LKR
-  createdAt: number;
-  settledAt?: number;
+  stake: number;
+  potentialPayout: number;
+  status: 'ACTIVE' | 'WON' | 'LOST';
+  placedAt: number;
 }
-

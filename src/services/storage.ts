@@ -5,6 +5,7 @@ import {
   AdminSettings,
   CrashGameId,
   CrashGameEngineConfig,
+  MinesGameEngineConfig,
   LeaderboardEntry,
   Transaction,
   BetRecord,
@@ -483,12 +484,16 @@ export function getUsers(): User[] {
 
 export function saveUser(updatedUser: User) {
   if (isRemovedFakeAgent(updatedUser)) return;
+  const stampedUser: User = {
+    ...updatedUser,
+    updatedAt: Date.now(),
+  };
   const users = getUsers();
-  const index = users.findIndex((u) => u.id === updatedUser.id);
+  const index = users.findIndex((u) => u.id === stampedUser.id);
   if (index >= 0) {
-    users[index] = updatedUser;
+    users[index] = stampedUser;
   } else {
-    users.push(updatedUser);
+    users.push(stampedUser);
   }
 
   // Recompute referralCount for all referrers whenever a user is saved
@@ -517,19 +522,23 @@ export function saveUser(updatedUser: User) {
     window.dispatchEvent(new Event('storage'));
   } catch {}
 
-  // Sync user & referral data with backend server across tabs/browsers
+  // Sync user & referral data with backend server across tabs/browsers/devices
   fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user: updatedUser }),
+    body: JSON.stringify({ user: stampedUser }),
   }).catch(() => {});
 
   // Sync Cash Agent additions or role updates with server
   fetch('/api/agents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent: updatedUser }),
+    body: JSON.stringify({ agent: stampedUser }),
   }).catch(() => {});
+}
+
+function isAgentUserRole(role?: string): boolean {
+  return role === 'deposit_agent' || role === 'withdraw_agent' || role === 'cash_agent';
 }
 
 export async function syncUsersWithServer(): Promise<User[]> {
@@ -558,6 +567,36 @@ export async function syncUsersWithServer(): Promise<User[]> {
       mergedMap.set(su.id, su);
       changed = true;
     } else {
+      const srvUpdated = su.updatedAt || 0;
+      const locUpdated = existing.updatedAt || 0;
+      const serverIsNewer = srvUpdated >= locUpdated;
+
+      const nextRole =
+        isAgentUserRole(su.role) && !isAgentUserRole(existing.role)
+          ? su.role
+          : isAgentUserRole(existing.role) && !isAgentUserRole(su.role) && locUpdated > srvUpdated
+          ? existing.role
+          : serverIsNewer
+          ? su.role || existing.role
+          : existing.role;
+
+      const nextPassword = serverIsNewer
+        ? su.password || existing.password
+        : existing.password || su.password;
+      const nextMobile = serverIsNewer
+        ? su.mobile || existing.mobile
+        : existing.mobile || su.mobile;
+      const nextEmail = serverIsNewer
+        ? su.email || existing.email
+        : existing.email || su.email;
+      const nextUsername = serverIsNewer
+        ? su.username || existing.username
+        : existing.username || su.username;
+      const nextAgentContact = su.agentContact || existing.agentContact || nextMobile;
+      const nextIsBanned = serverIsNewer
+        ? Boolean(su.isBanned)
+        : Boolean(existing.isBanned);
+
       const nextReferralCount = Math.max(existing.referralCount || 0, su.referralCount || 0);
       const nextReferralEarnings = Math.max(existing.referralEarnings || 0, su.referralEarnings || 0);
       const nextUnclaimed =
@@ -573,6 +612,13 @@ export async function syncUsersWithServer(): Promise<User[]> {
       );
 
       if (
+        nextRole !== existing.role ||
+        nextPassword !== existing.password ||
+        nextMobile !== existing.mobile ||
+        nextEmail !== existing.email ||
+        nextUsername !== existing.username ||
+        nextAgentContact !== existing.agentContact ||
+        nextIsBanned !== existing.isBanned ||
         nextReferralCount !== existing.referralCount ||
         nextReferralEarnings !== existing.referralEarnings ||
         nextUnclaimed !== existing.unclaimedReferralRewards ||
@@ -583,6 +629,14 @@ export async function syncUsersWithServer(): Promise<User[]> {
       ) {
         mergedMap.set(su.id, {
           ...existing,
+          ...su,
+          role: nextRole,
+          password: nextPassword,
+          mobile: nextMobile,
+          email: nextEmail,
+          username: nextUsername,
+          agentContact: nextAgentContact,
+          isBanned: nextIsBanned,
           referralCount: nextReferralCount,
           referralEarnings: nextReferralEarnings,
           unclaimedReferralRewards: nextUnclaimed,
@@ -590,6 +644,7 @@ export async function syncUsersWithServer(): Promise<User[]> {
           totalWagered: nextTotalWagered,
           totalDeposited: nextTotalDeposited,
           commissionGeneratedForReferrer: nextCommGen,
+          updatedAt: Math.max(locUpdated, srvUpdated),
         });
         changed = true;
       }
@@ -626,12 +681,22 @@ export async function syncUsersWithServer(): Promise<User[]> {
     } catch {}
   }
 
-  // Push any local users not yet on server
+  // Push any local users or local agents not yet on server
   fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ users: allUsers }),
   }).catch(() => {});
+
+  for (const u of allUsers) {
+    if (isAgentUserRole(u.role) && !serverUsers.some((su) => su.id === u.id && isAgentUserRole(su.role))) {
+      fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: u }),
+      }).catch(() => {});
+    }
+  }
 
   return allUsers;
 }
@@ -938,15 +1003,32 @@ export async function fetchCashAgentsWithPresence(): Promise<CashAgentWithPresen
     }
   } catch {}
 
-  // Merge server agents into local users so Login / Admin Panel / Cashier stay in sync across tabs & browsers
+  // Merge server agents into local users so Login / Admin Panel / Cashier stay in sync across tabs & browsers & devices
   const localUsers = getUsers();
   let localChanged = false;
   for (const sa of serverAgents) {
     const idx = localUsers.findIndex((u) => u.id === sa.id);
+    const { isOnline, lastSeen, ...cleanUser } = sa;
     if (idx === -1) {
-      const { isOnline, lastSeen, ...cleanUser } = sa;
       localUsers.push(cleanUser as User);
       localChanged = true;
+    } else {
+      const prev = localUsers[idx];
+      if (
+        prev.role !== cleanUser.role ||
+        prev.password !== cleanUser.password ||
+        prev.mobile !== cleanUser.mobile ||
+        prev.username !== cleanUser.username ||
+        prev.agentContact !== cleanUser.agentContact
+      ) {
+        localUsers[idx] = {
+          ...prev,
+          ...(cleanUser as User),
+          password: cleanUser.password || prev.password || '12345678',
+          mobile: cleanUser.mobile || prev.mobile || cleanUser.agentContact,
+        };
+        localChanged = true;
+      }
     }
   }
   if (localChanged) {
@@ -961,11 +1043,17 @@ export async function fetchCashAgentsWithPresence(): Promise<CashAgentWithPresen
   );
 
   for (const la of localAgents) {
-    if (!serverAgents.some((sa) => sa.id === la.id)) {
+    const srvMatch = serverAgents.find((sa) => sa.id === la.id);
+    if (!srvMatch || srvMatch.password !== la.password || srvMatch.mobile !== la.mobile) {
       fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: la }),
+      }).catch(() => {});
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: la }),
       }).catch(() => {});
     }
   }
@@ -1040,6 +1128,19 @@ const DEFAULT_CRASH_GAMES_CONFIG: Record<CrashGameId, CrashGameEngineConfig> = {
   },
 };
 
+export const DEFAULT_MINES_CONFIG: MinesGameEngineConfig = {
+  riskLevel: 'medium',
+  loseRatePercent: 25,
+  houseEdgePercent: 4,
+  minBet: 10, // Min bet 10 LKR
+  maxBet: 50000,
+  defaultMinesCount: 3,
+  maxMultiplierCap: 500,
+  firstClickSafe: false,
+  forceNextClickMine: false,
+  isGamePaused: false,
+};
+
 export function getAdminSettings(): AdminSettings {
   try {
     const raw = localStorage.getItem(ADMIN_SETTINGS_KEY);
@@ -1081,6 +1182,16 @@ export function getAdminSettings(): AdminSettings {
         };
         updated = true;
       }
+      if (!parsed.minesConfig) {
+        parsed.minesConfig = { ...DEFAULT_MINES_CONFIG };
+        updated = true;
+      } else {
+        parsed.minesConfig = {
+          ...DEFAULT_MINES_CONFIG,
+          ...parsed.minesConfig,
+          minBet: parsed.minesConfig.minBet ?? 10,
+        };
+      }
       if (updated) {
         localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(parsed));
       }
@@ -1098,6 +1209,7 @@ export function getAdminSettings(): AdminSettings {
     queuedMultipliers: [],
     isGamePaused: false,
     crashGamesConfig: DEFAULT_CRASH_GAMES_CONFIG,
+    minesConfig: { ...DEFAULT_MINES_CONFIG },
   };
   localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(defaults));
   return defaults;
@@ -1105,6 +1217,35 @@ export function getAdminSettings(): AdminSettings {
 
 export function saveAdminSettings(settings: AdminSettings) {
   localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(settings));
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings }),
+  }).catch(() => {});
+}
+
+export async function syncAdminSettingsWithServer(): Promise<AdminSettings> {
+  try {
+    const res = await fetch('/api/settings');
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.settings && typeof data.settings === 'object') {
+        const current = getAdminSettings();
+        const merged: AdminSettings = {
+          ...current,
+          ...data.settings,
+          minesConfig: {
+            ...DEFAULT_MINES_CONFIG,
+            ...(current.minesConfig || {}),
+            ...(data.settings.minesConfig || {}),
+          },
+        };
+        localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(merged));
+        return merged;
+      }
+    }
+  } catch {}
+  return getAdminSettings();
 }
 
 /**

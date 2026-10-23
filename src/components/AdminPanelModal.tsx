@@ -8,6 +8,8 @@ import {
   BetRecord,
   CrashGameId,
   CrashGameEngineConfig,
+  MinesGameEngineConfig,
+  MinesRiskLevel,
 } from '../types/game';
 import {
   getUsers,
@@ -16,6 +18,8 @@ import {
   getCurrentUser,
   getAdminSettings,
   saveAdminSettings,
+  syncAdminSettingsWithServer,
+  DEFAULT_MINES_CONFIG,
   getTransactions,
   saveTransactions,
   getBetHistory,
@@ -24,6 +28,7 @@ import {
   setAgentOnlineStatus,
   CashAgentWithPresence,
   creditReferrerCommission,
+  syncUsersWithServer,
 } from '../services/storage';
 import {
   ShieldCheck,
@@ -75,7 +80,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'users' | 'agents' | 'bets' | 'transactions' | 'analytics' | 'engine'
+    'users' | 'agents' | 'bets' | 'transactions' | 'analytics' | 'engine' | 'mines_engine'
   >('users');
 
   const [usersList, setUsersList] = useState<User[]>(getUsers());
@@ -127,10 +132,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       setBetHistoryList(getBetHistory());
       setSettings(getAdminSettings());
       setAgentPresenceList(getCashAgentsSync());
-      const freshAgents = await fetchCashAgentsWithPresence();
+      const [freshAgents, , syncedSettings] = await Promise.all([
+        fetchCashAgentsWithPresence().catch(() => getCashAgentsSync()),
+        syncUsersWithServer().catch(() => getUsers()),
+        syncAdminSettingsWithServer().catch(() => getAdminSettings()),
+      ]);
       if (mounted) {
         setAgentPresenceList(freshAgents);
         setUsersList(getUsers());
+        setSettings(syncedSettings);
       }
     };
 
@@ -162,11 +172,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       .catch(() => {});
   };
 
-  // Create Cash Agent Handler
-  const handleCreateCashAgent = (e: React.FormEvent) => {
+  // Create Cash Agent Handler (Persists immediately to server so agent can log in from ANY device)
+  const handleCreateCashAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = agentName.trim();
-    const cleanMobile = agentMobile.trim().replace(/\s+/g, '');
+    const rawMobile = agentMobile.trim().replace(/\s+/g, '');
+    const cleanMobile = rawMobile.startsWith('+94') && rawMobile.length >= 11
+      ? '0' + rawMobile.slice(3)
+      : rawMobile.startsWith('94') && rawMobile.length === 11
+      ? '0' + rawMobile.slice(2)
+      : /^7\d{8}$/.test(rawMobile)
+      ? '0' + rawMobile
+      : rawMobile;
     const cleanEmail =
       agentEmail.trim().toLowerCase() ||
       `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}@lionbet.lk`;
@@ -183,7 +200,41 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         u.username.toLowerCase() === cleanName.toLowerCase()
     );
     if (existing) {
-      notify('An account with this Username or Login Mobile already exists.');
+      // If user already exists, upgrade them to this Agent role & credentials and sync to server!
+      const upgradedAgent: User = {
+        ...existing,
+        username: cleanName,
+        mobile: cleanMobile,
+        email: cleanEmail,
+        password: cleanPass,
+        role: agentRole,
+        agentContact: agentContact.trim() || cleanMobile,
+        createdByAdmin: true,
+        isBanned: false,
+        updatedAt: Date.now(),
+      };
+      saveUser(upgradedAgent);
+      setAgentOnlineStatus(upgradedAgent.id, true);
+      await Promise.all([
+        fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: upgradedAgent }),
+        }).catch(() => {}),
+        fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: upgradedAgent }),
+        }).catch(() => {}),
+      ]);
+      refreshAll();
+      setAgentName('');
+      setAgentMobile('');
+      setAgentEmail('');
+      setAgentContact('');
+      notify(
+        `Updated & synced Cash Agent "${upgradedAgent.username}" across all devices! Login ID: ${upgradedAgent.mobile} | Password: ${upgradedAgent.password}`
+      );
       return;
     }
 
@@ -205,18 +256,31 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       avatar: agentRole === 'deposit_agent' ? '💼' : agentRole === 'withdraw_agent' ? '🏦' : '🤝',
       agentContact: agentContact.trim() || cleanMobile,
       createdByAdmin: true,
+      updatedAt: Date.now(),
       createdAt: Date.now(),
     };
 
     saveUser(newAgent);
     setAgentOnlineStatus(newAgent.id, true);
+    await Promise.all([
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: newAgent }),
+      }).catch(() => {}),
+      fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: newAgent }),
+      }).catch(() => {}),
+    ]);
     refreshAll();
     setAgentName('');
     setAgentMobile('');
     setAgentEmail('');
     setAgentContact('');
     notify(
-      `Created Cash Agent "${newAgent.username}" (ONLINE)! Login ID: ${newAgent.mobile} | Password: ${newAgent.password}`
+      `Created Cash Agent "${newAgent.username}" (Synced to all devices)! Login ID: ${newAgent.mobile} | Password: ${newAgent.password}`
     );
   };
 
@@ -290,17 +354,44 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     refreshAll();
   };
 
-  const handleUpdateRole = (userId: string, newRole: UserRole) => {
-    const updated = usersList.map((u) => (u.id === userId ? { ...u, role: newRole } : u));
+  const handleUpdateRole = async (userId: string, newRole: UserRole) => {
+    const updated = usersList.map((u) =>
+      u.id === userId
+        ? {
+            ...u,
+            role: newRole,
+            password: u.password || '12345678',
+            mobile: u.mobile || u.agentContact || u.username,
+            updatedAt: Date.now(),
+          }
+        : u
+    );
     setUsersList(updated);
     const target = updated.find((u) => u.id === userId);
     if (target) {
       saveUser(target);
+      await Promise.all([
+        fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: target }),
+        }).catch(() => {}),
+        fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: target }),
+        }).catch(() => {}),
+      ]);
       if (target.id === currentUser.id) {
         onUserUpdated?.(target);
       }
+      refreshAll();
     }
-    notify(`Role updated to ${newRole.replace('_', ' ').toUpperCase()} for ${target?.username}`);
+    notify(
+      `Role updated to ${newRole.replace('_', ' ').toUpperCase()} for ${target?.username} (Login: ${
+        target?.mobile || target?.username
+      } | Pass: ${target?.password || '12345678'})`
+    );
   };
 
   const handleToggleBan = (userId: string) => {
@@ -440,6 +531,34 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       },
       `High-Loss Mode enabled for ${getSelectedGameConfig().gameName}! (22% Loss Rate, 52% Early Burst, 20% 1.00x Instant Crash)`
     );
+  };
+
+  const getMinesEngineConfig = (): MinesGameEngineConfig => ({
+    ...DEFAULT_MINES_CONFIG,
+    ...(settings.minesConfig || {}),
+    minBet: Math.max(10, settings.minesConfig?.minBet ?? 10),
+  });
+
+  const updateMinesEngineConfig = (
+    partial: Partial<MinesGameEngineConfig>,
+    customNotification?: string
+  ) => {
+    const currentMines = getMinesEngineConfig();
+    const updatedMines: MinesGameEngineConfig = {
+      ...currentMines,
+      ...partial,
+      minBet: Math.max(10, partial.minBet ?? currentMines.minBet ?? 10),
+    };
+    const nextSettings: AdminSettings = {
+      ...settings,
+      minesConfig: updatedMines,
+    };
+    setSettings(nextSettings);
+    saveAdminSettings(nextSettings);
+    onSettingsUpdated(nextSettings);
+    if (customNotification) {
+      notify(customNotification);
+    }
   };
 
   // Filtered collections
@@ -654,7 +773,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             }`}
           >
             <Sliders className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Loss Rate &amp; Rig</span>
+            <span>Crash Loss Rate &amp; Rig</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('mines_engine')}
+            className={`pb-2.5 px-2.5 sm:px-3 text-[11px] sm:text-xs font-black transition border-b-2 flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
+              activeTab === 'mines_engine'
+                ? 'border-emerald-400 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-white'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            <span>💎 Mines Risk &amp; Lose Rate</span>
           </button>
         </div>
 
@@ -2190,6 +2322,360 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       );
                     })}
                   </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* =================================================================
+              7. LANKA MINES LKR — RISK LEVEL, LOSE RATE & BOMB TRAP ENGINE
+              ================================================================= */}
+          {activeTab === 'mines_engine' && (() => {
+            const mCfg = getMinesEngineConfig();
+            const riskOptions: {
+              id: MinesRiskLevel;
+              label: string;
+              badge: string;
+              desc: string;
+              defaultLoseRate: number;
+            }[] = [
+              {
+                id: 'low',
+                label: 'Low Risk Mode',
+                badge: 'PLAYER FRIENDLY',
+                desc: 'Fair board distribution with gentle bomb pressure',
+                defaultLoseRate: 10,
+              },
+              {
+                id: 'medium',
+                label: 'Medium Risk Mode',
+                badge: 'BALANCED',
+                desc: 'Standard casino house advantage & moderate bomb traps',
+                defaultLoseRate: 28,
+              },
+              {
+                id: 'high',
+                label: 'High Risk Mode',
+                badge: 'HIGH HOUSE PROFIT',
+                desc: 'Increased bomb collision rate as player reveals gems',
+                defaultLoseRate: 55,
+              },
+              {
+                id: 'extreme',
+                label: 'Extreme Trap Mode',
+                badge: 'MAX LOSS RATE',
+                desc: 'Aggressive dynamic bomb relocation under player clicks',
+                defaultLoseRate: 82,
+              },
+            ];
+
+            return (
+              <div className="space-y-5">
+                {/* Top Header & Quick Force Next Bomb Banner */}
+                <div className="bg-slate-950 border border-emerald-500/40 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-black text-white text-sm flex items-center gap-2">
+                      <span>💎</span>
+                      <span>Lanka Mines LKR — Risk Level, Lose Rate &amp; Trap Engine</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Control Mines Risk Level, Lose Rate %, House Edge %, Min/Max Bet (LKR), and Force Next Click Bomb in real time across all devices.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateMinesEngineConfig(
+                          { forceNextClickMine: !mCfg.forceNextClickMine },
+                          !mCfg.forceNextClickMine
+                            ? '💣 ARMED: Next tile clicked in Lanka Mines will be a guaranteed MINE!'
+                            : 'Disarmed Force Next Click Mine'
+                        )
+                      }
+                      className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 transition cursor-pointer shadow ${
+                        mCfg.forceNextClickMine
+                          ? 'bg-rose-600 text-white animate-pulse border border-rose-300'
+                          : 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300'
+                      }`}
+                    >
+                      <span>💣</span>
+                      <span>
+                        {mCfg.forceNextClickMine
+                          ? 'ARMED: NEXT CLICK = BOMB!'
+                          : 'Force Next Click Bomb'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateMinesEngineConfig(
+                          { isGamePaused: !mCfg.isGamePaused },
+                          `Lanka Mines is now ${!mCfg.isGamePaused ? 'PAUSED' : 'ACTIVE'}`
+                        )
+                      }
+                      className={`px-3 py-2 rounded-xl font-black text-xs border transition cursor-pointer ${
+                        mCfg.isGamePaused
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                          : 'bg-slate-900 border-slate-700 text-emerald-400'
+                      }`}
+                    >
+                      {mCfg.isGamePaused ? 'Resume Mines' : 'Mines Active'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Risk Level Selector Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {riskOptions.map((opt) => {
+                    const isSelected = mCfg.riskLevel === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() =>
+                          updateMinesEngineConfig(
+                            {
+                              riskLevel: opt.id,
+                              loseRatePercent: opt.defaultLoseRate,
+                            },
+                            `Mines Risk Level set to ${opt.label.toUpperCase()} (Lose Rate: ${opt.defaultLoseRate}%)`
+                          )
+                        }
+                        className={`text-left p-3.5 rounded-xl border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-600/20 border-emerald-400 shadow-lg shadow-emerald-950/50'
+                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="font-black text-white text-xs">{opt.label}</span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                              isSelected
+                                ? 'bg-emerald-400 text-slate-950'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {opt.badge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mb-2">{opt.desc}</p>
+                        <div className="text-[10px] font-mono font-bold text-amber-300">
+                          Preset Lose Rate: {opt.defaultLoseRate}%
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Detailed Mines Parameters Table */}
+                <div className="border border-slate-700/80 rounded-xl overflow-x-auto bg-slate-950">
+                  <table className="w-full min-w-[700px] text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-700 text-[11px] uppercase font-black text-slate-300 bg-slate-900">
+                        <th className="p-3 border-r border-slate-800">Lanka Mines Parameter</th>
+                        <th className="p-3 border-r border-slate-800">Current Value</th>
+                        <th className="p-3">Control / Adjustment</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {/* Lose Rate % */}
+                      <tr>
+                        <td className="p-3 border-r border-slate-800">
+                          <span className="font-black text-rose-400 block">
+                            Lose Rate / Bomb Trap Probability (%)
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            Extra probability that clicking a hidden tile triggers a bomb (0% = Pure Natural Odds, 100% = Guaranteed Bomb)
+                          </span>
+                        </td>
+                        <td className="p-3 border-r border-slate-800 font-mono font-black text-rose-400 text-sm">
+                          {mCfg.loseRatePercent}%
+                        </td>
+                        <td className="p-3 space-y-2">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={mCfg.loseRatePercent}
+                            onChange={(e) =>
+                              updateMinesEngineConfig({
+                                loseRatePercent: parseInt(e.target.value, 10),
+                              })
+                            }
+                            className="w-full accent-rose-500 cursor-pointer"
+                          />
+                          <div className="flex flex-wrap gap-1.5">
+                            {[0, 15, 25, 40, 60, 80, 95].map((pct) => (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() =>
+                                  updateMinesEngineConfig(
+                                    { loseRatePercent: pct },
+                                    `Mines Lose Rate set to ${pct}%`
+                                  )
+                                }
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-black border cursor-pointer ${
+                                  mCfg.loseRatePercent === pct
+                                    ? 'bg-rose-600 text-white border-rose-400'
+                                    : 'bg-slate-900 text-slate-300 border-slate-700'
+                                }`}
+                              >
+                                {pct}%
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* House Edge % */}
+                      <tr>
+                        <td className="p-3 border-r border-slate-800">
+                          <span className="font-black text-white block">
+                            Multiplier House Edge (%)
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            Adjusts the LKR payout multiplier curve for each revealed gem
+                          </span>
+                        </td>
+                        <td className="p-3 border-r border-slate-800 font-mono font-black text-purple-400 text-sm">
+                          {mCfg.houseEdgePercent}%
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="range"
+                            min="1"
+                            max="35"
+                            step="1"
+                            value={mCfg.houseEdgePercent}
+                            onChange={(e) =>
+                              updateMinesEngineConfig({
+                                houseEdgePercent: parseInt(e.target.value, 10),
+                              })
+                            }
+                            className="w-full accent-purple-500 cursor-pointer"
+                          />
+                        </td>
+                      </tr>
+
+                      {/* Min & Max Bet in LKR */}
+                      <tr>
+                        <td className="p-3 border-r border-slate-800">
+                          <span className="font-black text-white block">
+                            Min Bet &amp; Max Bet Limits (LKR)
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            All bets in Sri Lankan Rupees (Default Min Bet: Rs. 10 LKR)
+                          </span>
+                        </td>
+                        <td className="p-3 border-r border-slate-800 font-mono font-black text-emerald-400">
+                          Rs. {mCfg.minBet.toLocaleString()} – Rs. {mCfg.maxBet.toLocaleString()} LKR
+                        </td>
+                        <td className="p-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                Min Bet (LKR)
+                              </label>
+                              <input
+                                type="number"
+                                min="10"
+                                step="10"
+                                value={mCfg.minBet}
+                                onChange={(e) =>
+                                  updateMinesEngineConfig({
+                                    minBet: Math.max(10, parseInt(e.target.value || '10', 10)),
+                                  })
+                                }
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                Max Bet (LKR)
+                              </label>
+                              <input
+                                type="number"
+                                min="100"
+                                step="500"
+                                value={mCfg.maxBet}
+                                onChange={(e) =>
+                                  updateMinesEngineConfig({
+                                    maxBet: Math.max(100, parseInt(e.target.value || '50000', 10)),
+                                  })
+                                }
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-white"
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Default Mines & First Click Safe */}
+                      <tr>
+                        <td className="p-3 border-r border-slate-800">
+                          <span className="font-black text-white block">
+                            Default Mines Count &amp; First-Click Protection
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            Configure default bomb count (1–24) and whether the 1st tile click is guaranteed safe
+                          </span>
+                        </td>
+                        <td className="p-3 border-r border-slate-800 font-mono font-bold text-amber-300">
+                          {mCfg.defaultMinesCount} Mines •{' '}
+                          {mCfg.firstClickSafe ? '1st Click Safe' : '1st Click Can Hit Mine'}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400">Default Mines:</span>
+                              <select
+                                value={mCfg.defaultMinesCount}
+                                onChange={(e) =>
+                                  updateMinesEngineConfig({
+                                    defaultMinesCount: parseInt(e.target.value, 10),
+                                  })
+                                }
+                                className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-amber-300"
+                              >
+                                {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
+                                  <option key={n} value={n}>
+                                    {n} Mines
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateMinesEngineConfig(
+                                  { firstClickSafe: !mCfg.firstClickSafe },
+                                  `First-Click Safe Guarantee ${
+                                    !mCfg.firstClickSafe ? 'ENABLED' : 'DISABLED'
+                                  }`
+                                )
+                              }
+                              className={`px-3 py-1 rounded-lg font-black text-[10px] uppercase border cursor-pointer ${
+                                mCfg.firstClickSafe
+                                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                                  : 'bg-slate-900 border-slate-700 text-slate-400'
+                              }`}
+                            >
+                              {mCfg.firstClickSafe
+                                ? '✓ 1st Click Safe ON'
+                                : '1st Click Safe OFF'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             );

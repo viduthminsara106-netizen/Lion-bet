@@ -8,37 +8,42 @@ import { GoogleGenAI } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
 const CHAT_HISTORY_FILE = path.join(__dirname, '.chat_history.json');
 const CASH_AGENTS_FILE = path.join(__dirname, '.cash_agents.json');
 const USERS_DB_FILE = path.join(__dirname, '.users_db.json');
-
-interface ServerCashAgent {
-  id: string;
-  username: string;
-  mobile?: string;
-  email: string;
-  password?: string;
-  role: 'deposit_agent' | 'withdraw_agent' | 'cash_agent';
-  balance: number;
-  avatar: string;
-  agentContact?: string;
-  createdByAdmin?: boolean;
-  createdAt: number;
-  isBanned?: boolean;
-  referralCode?: string;
-}
+const ADMIN_SETTINGS_FILE = path.join(__dirname, '.admin_settings.json');
 
 const FAKE_AGENT_IDS = new Set(['user_dep_agent_1', 'user_wd_agent_1']);
 const FAKE_AGENT_NAMES = new Set(['depositagent_01', 'withdrawagent_01']);
 
-function isFakeAgent(agent: { id?: string; username?: string }): boolean {
+function isFakeAgent(agent: any): boolean {
   if (!agent) return true;
   if (agent.id && FAKE_AGENT_IDS.has(agent.id)) return true;
-  if (agent.username && FAKE_AGENT_NAMES.has(agent.username.toLowerCase())) return true;
+  if (agent.username && FAKE_AGENT_NAMES.has(String(agent.username).toLowerCase())) return true;
   return false;
 }
 
-function loadCashAgents(): ServerCashAgent[] {
+function isAgentRole(role?: string): boolean {
+  return role === 'deposit_agent' || role === 'withdraw_agent' || role === 'cash_agent';
+}
+
+function normalizeSriLankaPhone(raw?: string): string {
+  if (!raw) return '';
+  const digits = String(raw).replace(/[\s\-()]/g, '');
+  if (digits.startsWith('+94') && digits.length >= 11) {
+    return '0' + digits.slice(3);
+  }
+  if (digits.startsWith('94') && digits.length === 11) {
+    return '0' + digits.slice(2);
+  }
+  if (/^7\d{8}$/.test(digits)) {
+    return '0' + digits;
+  }
+  return digits;
+}
+
+function loadCashAgents(): any[] {
   try {
     if (fs.existsSync(CASH_AGENTS_FILE)) {
       const raw = fs.readFileSync(CASH_AGENTS_FILE, 'utf-8');
@@ -47,19 +52,15 @@ function loadCashAgents(): ServerCashAgent[] {
         return parsed.filter((a) => !isFakeAgent(a));
       }
     }
-  } catch {
-    // ignore read error
-  }
+  } catch {}
   return [];
 }
 
-function saveCashAgents(agents: ServerCashAgent[]) {
+function saveCashAgents(agents: any[]) {
   try {
     const clean = agents.filter((a) => !isFakeAgent(a));
     fs.writeFileSync(CASH_AGENTS_FILE, JSON.stringify(clean, null, 2), 'utf-8');
-  } catch {
-    // ignore write error
-  }
+  } catch {}
 }
 
 function loadServerUsers(): any[] {
@@ -71,9 +72,7 @@ function loadServerUsers(): any[] {
         return parsed.filter((u) => !isFakeAgent(u));
       }
     }
-  } catch {
-    // ignore read error
-  }
+  } catch {}
   return [];
 }
 
@@ -81,30 +80,26 @@ function saveServerUsers(users: any[]) {
   try {
     const clean = users.filter((u) => u && u.id && !isFakeAgent(u));
     fs.writeFileSync(USERS_DB_FILE, JSON.stringify(clean, null, 2), 'utf-8');
-  } catch {
-    // ignore write error
-  }
+  } catch {}
 }
 
-interface ServerChatMessage {
-  id: string;
-  userId: string;
-  username: string;
-  avatar: string;
-  role?: string;
-  text: string;
-  timestamp: number;
-  isSystemWin?: boolean;
-  highlightMultiplier?: number;
-  replyTo?: {
-    id: string;
-    username: string;
-    text: string;
-  };
-  recipientId?: string;
+function loadServerAdminSettings(): any | null {
+  try {
+    if (fs.existsSync(ADMIN_SETTINGS_FILE)) {
+      const raw = fs.readFileSync(ADMIN_SETTINGS_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return null;
 }
 
-const DEFAULT_INITIAL_MESSAGES: ServerChatMessage[] = [
+function saveServerAdminSettings(settings: any) {
+  try {
+    fs.writeFileSync(ADMIN_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+  } catch {}
+}
+
+const DEFAULT_INITIAL_MESSAGES = [
   {
     id: 'c1',
     userId: 'bot_01',
@@ -131,7 +126,7 @@ const DEFAULT_INITIAL_MESSAGES: ServerChatMessage[] = [
   },
 ];
 
-function loadChatHistory(): ServerChatMessage[] {
+function loadChatHistory(): any[] {
   try {
     if (fs.existsSync(CHAT_HISTORY_FILE)) {
       const raw = fs.readFileSync(CHAT_HISTORY_FILE, 'utf-8');
@@ -140,41 +135,88 @@ function loadChatHistory(): ServerChatMessage[] {
         return parsed.slice(-120);
       }
     }
-  } catch {
-    // ignore read error
-  }
+  } catch {}
   return [...DEFAULT_INITIAL_MESSAGES];
 }
 
-function saveChatHistory(messages: ServerChatMessage[]) {
+function saveChatHistory(messages: any[]) {
   try {
     fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify(messages.slice(-120), null, 2), 'utf-8');
-  } catch {
-    // ignore write error
-  }
+  } catch {}
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '5mb' }));
 
-  // Shared Server-Authoritative Multi-User Chat State & Users/Referrals DB
-  let sharedChatMessages: ServerChatMessage[] = loadChatHistory();
-  let cashAgents: ServerCashAgent[] = loadCashAgents();
-  let serverUsers: any[] = loadServerUsers();
+  let sharedChatMessages = loadChatHistory();
+  let cashAgents = loadCashAgents();
+  let serverUsers = loadServerUsers();
+  let serverAdminSettings = loadServerAdminSettings();
+
   const activePresence = new Map<string, { lastSeen: number; manualOffline?: boolean }>();
   const PRESENCE_TIMEOUT_MS = 45000;
-  const sseClients = new Set<express.Response>();
+  const sseClients = new Set<any>();
+
+  // Cross-sync cashAgents and serverUsers on boot so every Agent is always in serverUsers and vice versa
+  const syncAgentsAndUsersLists = () => {
+    let usersModified = false;
+    let agentsModified = false;
+
+    for (const ag of cashAgents) {
+      if (!ag || !ag.id || isFakeAgent(ag)) continue;
+      const uIdx = serverUsers.findIndex((u) => u.id === ag.id);
+      const { isOnline, lastSeen, ...cleanAg } = ag;
+      if (uIdx === -1) {
+        serverUsers.push(cleanAg);
+        usersModified = true;
+      } else {
+        const existing = serverUsers[uIdx];
+        serverUsers[uIdx] = {
+          ...existing,
+          ...cleanAg,
+          password: cleanAg.password || existing.password || '12345678',
+          mobile: cleanAg.mobile || existing.mobile || cleanAg.agentContact,
+          role: isAgentRole(cleanAg.role) ? cleanAg.role : existing.role,
+        };
+        usersModified = true;
+      }
+    }
+
+    for (const u of serverUsers) {
+      if (!u || !u.id || isFakeAgent(u)) continue;
+      if (isAgentRole(u.role)) {
+        const aIdx = cashAgents.findIndex((a) => a.id === u.id);
+        if (aIdx === -1) {
+          cashAgents.push({ adminOnlineStatus: true, ...u });
+          agentsModified = true;
+        } else {
+          cashAgents[aIdx] = {
+            ...cashAgents[aIdx],
+            ...u,
+            password: u.password || cashAgents[aIdx].password || '12345678',
+            mobile: u.mobile || cashAgents[aIdx].mobile || u.agentContact,
+          };
+          agentsModified = true;
+        }
+      }
+    }
+
+    if (usersModified) saveServerUsers(serverUsers);
+    if (agentsModified) saveCashAgents(cashAgents);
+  };
+
+  syncAgentsAndUsersLists();
 
   const recomputeServerReferralCounts = () => {
     let changed = false;
     for (const u of serverUsers) {
       if (!u.referralCode) continue;
-      const codeUpper = String(u.referralCode).toUpperCase();
+      const codeUpper = String(u.referralCode).trim().toUpperCase();
       const referredMembers = serverUsers.filter(
-        (m) => m.id !== u.id && String(m.referredBy || '').toUpperCase() === codeUpper
+        (m) => m.id !== u.id && String(m.referredBy || '').trim().toUpperCase() === codeUpper
       );
       if (referredMembers.length > (u.referralCount || 0)) {
         u.referralCount = referredMembers.length;
@@ -186,46 +228,193 @@ async function startServer() {
     }
   };
 
-  // GET /api/users - Sync users and referral tracking across tabs and browsers
   app.get('/api/users', (_req, res) => {
+    syncAgentsAndUsersLists();
     recomputeServerReferralCounts();
     res.json({ ok: true, users: serverUsers });
   });
 
-  // POST /api/users - Save or merge user(s) and recalculate referral tracking
   app.post('/api/users', (req, res) => {
     const incomingUser = req.body?.user;
     const incomingUsers = req.body?.users;
 
-    const upsertOne = (u: any) => {
+    const upsertOne = (u: any, isExplicitSingleSave: boolean) => {
       if (!u || !u.id || isFakeAgent(u)) return;
       const idx = serverUsers.findIndex((existing) => existing.id === u.id);
       if (idx >= 0) {
         const prev = serverUsers[idx];
+        const prevUpdatedAt = prev.updatedAt || 0;
+        const incUpdatedAt = u.updatedAt || 0;
+
+        // Protect Agent roles & newer updates from being overwritten by stale bulk sync from another tab/device
+        const resolvedRole = isExplicitSingleSave
+          ? u.role || prev.role
+          : isAgentRole(prev.role) && !isAgentRole(u.role) && incUpdatedAt <= prevUpdatedAt
+          ? prev.role
+          : incUpdatedAt >= prevUpdatedAt
+          ? u.role || prev.role
+          : prev.role;
+
+        const resolvedPassword = isExplicitSingleSave
+          ? u.password || prev.password
+          : incUpdatedAt >= prevUpdatedAt
+          ? u.password || prev.password
+          : prev.password || u.password;
+
+        const resolvedMobile = isExplicitSingleSave
+          ? u.mobile || prev.mobile
+          : incUpdatedAt >= prevUpdatedAt
+          ? u.mobile || prev.mobile
+          : prev.mobile || u.mobile;
+
         serverUsers[idx] = {
           ...prev,
-          ...u,
+          ...(isExplicitSingleSave || incUpdatedAt >= prevUpdatedAt ? u : {}),
+          role: resolvedRole,
+          password: resolvedPassword,
+          mobile: resolvedMobile,
+          agentContact: u.agentContact || prev.agentContact || resolvedMobile,
           referralCount: Math.max(prev.referralCount || 0, u.referralCount || 0),
           referralEarnings: Math.max(prev.referralEarnings || 0, u.referralEarnings || 0),
+          totalWagered: Math.max(prev.totalWagered || 0, u.totalWagered || 0),
+          totalDeposited: Math.max(prev.totalDeposited || 0, u.totalDeposited || 0),
+          commissionGeneratedForReferrer: Math.max(
+            prev.commissionGeneratedForReferrer || 0,
+            u.commissionGeneratedForReferrer || 0
+          ),
+          updatedAt: isExplicitSingleSave
+            ? Date.now()
+            : Math.max(prevUpdatedAt, incUpdatedAt, Date.now()),
         };
       } else {
-        serverUsers.push(u);
+        serverUsers.push({
+          ...u,
+          updatedAt: u.updatedAt || Date.now(),
+        });
       }
     };
 
-    if (incomingUser) upsertOne(incomingUser);
+    if (incomingUser) upsertOne(incomingUser, true);
     if (Array.isArray(incomingUsers)) {
-      for (const u of incomingUsers) upsertOne(u);
+      for (const u of incomingUsers) upsertOne(u, false);
     }
 
+    syncAgentsAndUsersLists();
     recomputeServerReferralCounts();
     saveServerUsers(serverUsers);
     res.json({ ok: true, users: serverUsers });
   });
 
-  const isUserOnlineNow = (
-    agent: ServerCashAgent & { adminOnlineStatus?: boolean }
-  ): { isOnline: boolean; lastSeen: number | null } => {
+  // Dedicated Cross-Device Login Endpoint (searches both serverUsers and cashAgents)
+  app.post('/api/auth/login', (req, res) => {
+    syncAgentsAndUsersLists();
+    const rawIdentifier = String(req.body?.identifier || '').trim();
+    const rawPassword = String(req.body?.password || '');
+
+    if (!rawIdentifier) {
+      return res.status(400).json({ ok: false, error: 'Missing login identifier' });
+    }
+
+    const normPhone = normalizeSriLankaPhone(rawIdentifier);
+    const idLower = rawIdentifier.toLowerCase();
+    const idCompact = idLower.replace(/[\s_]+/g, '');
+
+    // Direct Admin Credentials Check
+    if (normPhone === '0711452778' || idLower === 'admin@balloon.lk' || idLower === 'admin@lionbet.lk') {
+      if (rawPassword !== '12345678') {
+        return res.status(401).json({ ok: false, error: 'Invalid admin password.' });
+      }
+      let adminUser = serverUsers.find((u) => u.role === 'admin' || u.id === 'user_admin_1');
+      if (!adminUser) {
+        adminUser = {
+          id: 'user_admin_1',
+          username: 'BalloonAdminLK',
+          mobile: '0711452778',
+          email: 'admin@balloon.lk',
+          password: '12345678',
+          role: 'admin',
+          balance: 150000,
+          referralCode: 'ADMINLK',
+          referralCount: 15,
+          referralEarnings: 32000,
+          unclaimedReferralRewards: 8500,
+          totalWagered: 120000,
+          totalWon: 135000,
+          isBanned: false,
+          avatar: '👑',
+          createdAt: Date.now(),
+        };
+        serverUsers.push(adminUser);
+        saveServerUsers(serverUsers);
+      }
+      return res.json({ ok: true, user: adminUser });
+    }
+
+    // Combined pool prioritizing agents & registered accounts
+    const allCandidates = [...cashAgents, ...serverUsers];
+    const matchUser = (u: any): boolean => {
+      if (!u || !u.id || isFakeAgent(u)) return false;
+      const uPhone = normalizeSriLankaPhone(u.mobile);
+      const uContact = normalizeSriLankaPhone(u.agentContact);
+      const uNameLower = String(u.username || '').trim().toLowerCase();
+      const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
+      const uEmailLower = String(u.email || '').trim().toLowerCase();
+      const uIdLower = String(u.id || '').trim().toLowerCase();
+
+      if (normPhone && (uPhone === normPhone || uContact === normPhone)) return true;
+      if (u.mobile && String(u.mobile).trim().toLowerCase() === idLower) return true;
+      if (u.agentContact && String(u.agentContact).trim().toLowerCase() === idLower) return true;
+      if (uNameLower && (uNameLower === idLower || uNameCompact === idCompact)) return true;
+      if (uEmailLower && uEmailLower === idLower) return true;
+      if (uIdLower && uIdLower === idLower) return true;
+      return false;
+    };
+
+    const found = allCandidates.find(matchUser);
+    if (!found) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Account not found. Please check your Mobile Number, Username, Email, or Agent ID.',
+      });
+    }
+
+    const expectedPass = found.password ? String(found.password).trim() : '';
+    if (expectedPass && expectedPass !== rawPassword.trim() && expectedPass !== rawPassword) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Incorrect password. Please try again.',
+      });
+    }
+
+    if (found.isBanned) {
+      return res.status(403).json({
+        ok: false,
+        error: 'This account has been suspended by the administrator.',
+      });
+    }
+
+    const { isOnline, lastSeen, ...cleanUser } = found;
+    return res.json({ ok: true, user: cleanUser });
+  });
+
+  // Global Admin Settings Sync (Mines Risk Level, Lose Rate, Crash Config)
+  app.get('/api/settings', (_req, res) => {
+    res.json({ ok: true, settings: serverAdminSettings });
+  });
+
+  app.post('/api/settings', (req, res) => {
+    const incoming = req.body?.settings;
+    if (incoming && typeof incoming === 'object') {
+      serverAdminSettings = {
+        ...(serverAdminSettings || {}),
+        ...incoming,
+      };
+      saveServerAdminSettings(serverAdminSettings);
+    }
+    res.json({ ok: true, settings: serverAdminSettings });
+  });
+
+  const isUserOnlineNow = (agent: any) => {
     const entry = activePresence.get(agent.id);
     if (typeof agent.adminOnlineStatus === 'boolean') {
       return {
@@ -242,52 +431,57 @@ async function startServer() {
     return { isOnline: true, lastSeen: agent.createdAt };
   };
 
-  // GET /api/agents - List all Admin-created Cash Agents and their real-time online/offline status on the site
   app.get('/api/agents', (_req, res) => {
+    syncAgentsAndUsersLists();
     cashAgents = cashAgents.filter((a) => !isFakeAgent(a));
     const agentsWithPresence = cashAgents.map((agent) => {
       const { isOnline, lastSeen } = isUserOnlineNow(agent);
-      return {
-        ...agent,
-        isOnline,
-        lastSeen,
-      };
+      return { ...agent, isOnline, lastSeen };
     });
     res.json({ ok: true, agents: agentsWithPresence });
   });
 
-  // POST /api/agents - Create or update an Admin-created Cash Agent
   app.post('/api/agents', (req, res) => {
-    const agent = req.body?.agent as (ServerCashAgent & { adminOnlineStatus?: boolean }) | undefined;
+    const agent = req.body?.agent;
     if (!agent || !agent.id || !agent.username) {
       return res.status(400).json({ error: 'Invalid agent payload' });
     }
     if (isFakeAgent(agent)) {
       return res.json({ ok: true, ignored: true });
     }
-    const isAgentRole =
-      agent.role === 'deposit_agent' ||
-      agent.role === 'withdraw_agent' ||
-      agent.role === 'cash_agent';
 
-    if (!isAgentRole) {
-      // If role was changed away from agent, remove from cashAgents list
-      cashAgents = cashAgents.filter((a) => a.id !== agent.id);
+    const agentWithTimestamp = {
+      ...agent,
+      mobile: agent.mobile || agent.agentContact || '',
+      password: agent.password || '12345678',
+      updatedAt: Date.now(),
+    };
+
+    // Always upsert into serverUsers too so cross-device login always has the agent
+    const uIdx = serverUsers.findIndex((u) => u.id === agentWithTimestamp.id);
+    if (uIdx >= 0) {
+      serverUsers[uIdx] = { ...serverUsers[uIdx], ...agentWithTimestamp };
+    } else {
+      serverUsers.push(agentWithTimestamp);
+    }
+    saveServerUsers(serverUsers);
+
+    if (!isAgentRole(agentWithTimestamp.role)) {
+      cashAgents = cashAgents.filter((a) => a.id !== agentWithTimestamp.id);
       saveCashAgents(cashAgents);
       return res.json({ ok: true, agents: cashAgents });
     }
 
-    const idx = cashAgents.findIndex((a) => a.id === agent.id);
+    const idx = cashAgents.findIndex((a) => a.id === agentWithTimestamp.id);
     if (idx >= 0) {
-      cashAgents[idx] = { ...cashAgents[idx], ...agent };
+      cashAgents[idx] = { ...cashAgents[idx], ...agentWithTimestamp };
     } else {
-      cashAgents.push({ adminOnlineStatus: true, ...agent } as any);
+      cashAgents.push({ adminOnlineStatus: true, ...agentWithTimestamp });
     }
     saveCashAgents(cashAgents);
-    return res.json({ ok: true, agent });
+    return res.json({ ok: true, agent: agentWithTimestamp });
   });
 
-  // POST /api/agents/status - Toggle or set an agent's Online/Offline status
   app.post('/api/agents/status', (req, res) => {
     const { agentId, isOnline } = req.body || {};
     if (!agentId) {
@@ -295,7 +489,7 @@ async function startServer() {
     }
     const idx = cashAgents.findIndex((a) => a.id === agentId);
     if (idx >= 0) {
-      (cashAgents[idx] as any).adminOnlineStatus = Boolean(isOnline);
+      cashAgents[idx].adminOnlineStatus = Boolean(isOnline);
       saveCashAgents(cashAgents);
     }
     if (isOnline) {
@@ -306,43 +500,49 @@ async function startServer() {
     return res.json({ ok: true });
   });
 
-  // DELETE /api/agents/:id - Delete a Cash Agent
   app.delete('/api/agents/:id', (req, res) => {
     const targetId = req.params.id;
     cashAgents = cashAgents.filter((a) => a.id !== targetId);
+    serverUsers = serverUsers.filter((u) => u.id !== targetId);
     activePresence.delete(targetId);
     saveCashAgents(cashAgents);
+    saveServerUsers(serverUsers);
     return res.json({ ok: true });
   });
 
-  // POST /api/presence/heartbeat - Record real-time online status on the site for logged-in user/agent
   app.post('/api/presence/heartbeat', (req, res) => {
     const { user, manualOffline } = req.body || {};
     if (!user || !user.id) {
       return res.status(400).json({ error: 'Missing user id' });
     }
-
     const existingPresence = activePresence.get(user.id);
     const effectiveManualOffline =
-      typeof manualOffline === 'boolean'
-        ? manualOffline
-        : Boolean(existingPresence?.manualOffline);
-
+      typeof manualOffline === 'boolean' ? manualOffline : Boolean(existingPresence?.manualOffline);
     activePresence.set(user.id, {
       lastSeen: Date.now(),
       manualOffline: effectiveManualOffline,
     });
 
-    // If this logged-in user is a valid Admin-created Cash Agent, ensure they exist in cashAgents list
-    if (
-      !isFakeAgent(user) &&
-      (user.role === 'deposit_agent' ||
-        user.role === 'withdraw_agent' ||
-        user.role === 'cash_agent')
-    ) {
+    if (!isFakeAgent(user)) {
+      const uIdx = serverUsers.findIndex((u) => u.id === user.id);
+      if (uIdx === -1) {
+        serverUsers.push({ ...user, updatedAt: Date.now() });
+        saveServerUsers(serverUsers);
+      } else if (isAgentRole(user.role)) {
+        serverUsers[uIdx] = {
+          ...serverUsers[uIdx],
+          ...user,
+          password: user.password || serverUsers[uIdx].password || '12345678',
+          mobile: user.mobile || serverUsers[uIdx].mobile || user.agentContact,
+        };
+        saveServerUsers(serverUsers);
+      }
+    }
+
+    if (!isFakeAgent(user) && isAgentRole(user.role)) {
       const idx = cashAgents.findIndex((a) => a.id === user.id);
       if (idx >= 0) {
-        const currentAdminStatus = (cashAgents[idx] as any).adminOnlineStatus;
+        const currentAdminStatus = cashAgents[idx].adminOnlineStatus;
         const nextStatus =
           typeof manualOffline === 'boolean'
             ? !manualOffline
@@ -352,13 +552,15 @@ async function startServer() {
         cashAgents[idx] = {
           ...cashAgents[idx],
           ...user,
+          password: user.password || cashAgents[idx].password || '12345678',
           adminOnlineStatus: nextStatus,
-        } as any;
+        };
       } else {
         cashAgents.push({
           ...user,
+          password: user.password || '12345678',
           adminOnlineStatus: typeof manualOffline === 'boolean' ? !manualOffline : true,
-        } as any);
+        });
       }
       saveCashAgents(cashAgents);
     }
@@ -366,7 +568,6 @@ async function startServer() {
     return res.json({ ok: true, timestamp: Date.now() });
   });
 
-  // POST /api/presence/logout - Record user logout without overwriting a Cash Agent's chosen Online/Offline visibility
   app.post('/api/presence/logout', (req, res) => {
     const { userId } = req.body || {};
     if (userId) {
@@ -378,7 +579,7 @@ async function startServer() {
     return res.json({ ok: true });
   });
 
-  const broadcastChatMessage = (message: ServerChatMessage) => {
+  const broadcastChatMessage = (message: any) => {
     const payload = `data: ${JSON.stringify({ type: 'chat:message', message })}\n\n`;
     for (const client of sseClients) {
       try {
@@ -389,25 +590,19 @@ async function startServer() {
     }
   };
 
-  // GET /api/chat/messages - Fetch shared chat history across all real users
   app.get('/api/chat/messages', (_req, res) => {
     res.json({ messages: sharedChatMessages.slice(-100) });
   });
 
-  // GET /api/chat/stream - Real-Time SSE stream for multi-user chat messages
   app.get('/api/chat/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
-
-    // Send initial sync event
+    (res as any).flushHeaders?.();
     res.write(
       `data: ${JSON.stringify({ type: 'chat:init', messages: sharedChatMessages.slice(-100) })}\n\n`
     );
-
     sseClients.add(res);
-
     const heartbeat = setInterval(() => {
       try {
         res.write(': ping\n\n');
@@ -416,21 +611,17 @@ async function startServer() {
         sseClients.delete(res);
       }
     }, 20000);
-
     req.on('close', () => {
       clearInterval(heartbeat);
       sseClients.delete(res);
     });
   });
 
-  // POST /api/chat/messages - Broadcast a new message from a real user (or system/bot) to all connected users
   app.post('/api/chat/messages', (req, res) => {
-    const msg = req.body?.message as ServerChatMessage | undefined;
+    const msg = req.body?.message;
     if (!msg || !msg.id || !msg.text || !msg.username) {
       return res.status(400).json({ error: 'Invalid chat message payload' });
     }
-
-    // Idempotency check: prevent duplicate message IDs
     const alreadyExists = sharedChatMessages.some((m) => m.id === msg.id);
     if (!alreadyExists) {
       sharedChatMessages.push(msg);
@@ -440,11 +631,9 @@ async function startServer() {
       saveChatHistory(sharedChatMessages);
       broadcastChatMessage(msg);
     }
-
     return res.json({ ok: true, message: msg });
   });
 
-  // POST /api/chat/llm - LLM-powered chat for public replies, private DMs, and non-repeating community messages
   app.post('/api/chat/llm', async (req, res) => {
     try {
       const {
@@ -455,31 +644,24 @@ async function startServer() {
         botAvatar = '🦁',
         replyToText = '',
         gameStatus = 'WAITING',
-        multiplier = 1.0,
+        multiplier = 1,
         lastRoundWinner = null,
         recentMessages = [],
       } = req.body || {};
 
       if (!process.env.GEMINI_API_KEY) {
-        return res.status(503).json({
-          error: 'GEMINI_API_KEY not configured on server',
-          fallback: true,
-        });
+        return res.status(503).json({ error: 'GEMINI_API_KEY not configured on server', fallback: true });
       }
 
       const ai = new GoogleGenAI({
         apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
       });
 
       const recentLines = Array.isArray(recentMessages)
         ? recentMessages
             .slice(-18)
-            .map((m: { username?: string; text?: string }) => `${m.username || 'User'}: ${m.text || ''}`)
+            .map((m: any) => `${m.username || 'User'}: ${m.text || ''}`)
             .join('\n')
         : '';
 
@@ -488,7 +670,6 @@ async function startServer() {
         : 'No longest-distance bonus winner recorded in the previous round.';
 
       let systemPrompt = '';
-
       if (mode === 'private_dm') {
         systemPrompt = `You are ${botName} (${botAvatar}), an experienced, friendly Sri Lankan player on "WinxCash" chatting in a 1-on-1 Private Chat with ${senderName}.
 Rules:
@@ -497,16 +678,14 @@ Rules:
 3. CRITICAL: NEVER repeat or closely paraphrase any previous message from the conversation history below.
 4. Keep your response concise (1 to 2 sentences) and natural for a chat window.
 Game facts if asked:
-- Platform: WinxCash (Balloon Crash LKR).
+- Platform: WinxCash (Balloon Crash LKR & Lanka Mines LKR).
 - Longest Distance Bonus: The player who jumps at the highest multiplier in a round gets an extra 100% bonus on their win credited to their balance! (${winnerInfo})
-- 1st Deposit Bonus: First deposit gets a 100% bonus! Bonus money itself cannot be withdrawn directly; you bet with it and only the profit won from betting can be withdrawn.
+- 1st Deposit Bonus: First deposit gets a 100% bonus for promocode registrations!
 - Current Flight State: ${gameStatus} @ ${Number(multiplier).toFixed(2)}x.
-
 Recent 1-on-1 conversation history:
 ${recentLines || '(Start of private conversation)'}
-${replyToText ? `\n(${senderName} is specifically replying to: "${replyToText}")` : ''}
+${replyToText ? `(${senderName} is specifically replying to: "${replyToText}")` : ''}
 ${senderName}'s new message: "${userMessage}"
-
 Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or prefix):`;
       } else if (mode === 'ambient_chat') {
         systemPrompt = `You are ${botName} (${botAvatar}), a real-sounding Sri Lankan player in the live multiplayer chat of "WinxCash".
@@ -514,38 +693,31 @@ Current game state: ${gameStatus} at ${Number(multiplier).toFixed(2)}x.
 ${winnerInfo}
 Recent chat messages (CRITICAL: DO NOT repeat, copy, or reuse any phrase from these):
 ${recentLines}
-
 Write ONE fresh, completely original, natural 1-sentence chat comment in Singlish, Sinhala, or English about your own bet, cashout timing, bankroll, or the current round. Never repeat anything in the recent chat messages. Output ONLY the message text:`;
       } else {
         systemPrompt = `You are ${botName} (${botAvatar}), a friendly, knowledgeable Sri Lankan player in the "WinxCash" live chat responding to ${senderName}.
 Rules:
-1. Directly answer what ${senderName} asked or said! Whether ${senderName} asks a game question, math/general question, strategy advice, or casual greeting, give a smart, accurate, helpful answer like ChatGPT/Gemini while sounding like a friendly fellow Sri Lankan player.
+1. Directly answer what ${senderName} asked or said!
 2. Match ${senderName}'s language (Sinhala script, Singlish, or English).
 3. CRITICAL: NEVER repeat any message or template from the recent chat history below.
-4. Keep it natural and concise (1 to 2 sentences). Mention @${senderName} only if natural in public chat.
-Game facts if relevant:
-- Longest Distance Bonus: Whoever goes the furthest (highest cashout multiplier) in a round gets +100% of their win amount added to their balance! (${winnerInfo})
-- 1st Deposit Bonus: 100% bonus on the 1st deposit only. Bonus funds cannot be withdrawn directly—only the profit made by betting can be withdrawn.
-- Current Flight State: ${gameStatus} @ ${Number(multiplier).toFixed(2)}x.
-
+4. Keep it natural and concise (1 to 2 sentences).
 Recent chat history:
 ${recentLines}
-${replyToText ? `\n(${senderName} replied to the message: "${replyToText}")` : ''}
+${replyToText ? `(${senderName} replied to the message: "${replyToText}")` : ''}
 ${senderName} said: "${userMessage}"
-
 Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefix):`;
       }
 
       let generatedText = '';
       try {
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-3-flash-preview',
           contents: systemPrompt,
         });
         generatedText = (response.text || '').trim().replace(/^["']|["']$/g, '');
       } catch {
         const fallbackResp = await ai.models.generateContent({
-          model: 'gemini-flash-latest',
+          model: 'gemini-2.5-flash',
           contents: systemPrompt,
         });
         generatedText = (fallbackResp.text || '').trim().replace(/^["']|["']$/g, '');
@@ -554,25 +726,17 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
       if (!generatedText) {
         return res.status(500).json({ error: 'Empty model response', fallback: true });
       }
-
       return res.json({ text: generatedText });
     } catch (error: any) {
       console.error('LLM Chat Error:', error?.message || error);
-      return res.status(500).json({
-        error: 'LLM request failed',
-        fallback: true,
-      });
+      return res.status(500).json({ error: 'LLM request failed', fallback: true });
     }
   });
 
-  // ============================================================================
-  // GET /api/sports/live-matches - Real-Time Global Live & Upcoming Matches Feed
-  // Fetches actual current matches from ESPN & TheSportsDB public scoreboards
-  // ============================================================================
   let cachedLiveMatches: any[] = [];
   let lastMatchesFetchTime = 0;
 
-  function americanToDecimalOdds(ml: number | undefined, fallback: number): number {
+  function americanToDecimalOdds(ml: any, fallback: number): number {
     if (typeof ml !== 'number' || isNaN(ml) || ml === 0) return fallback;
     if (ml > 0) {
       return Number(Math.max(1.12, 1 + ml / 100).toFixed(2));
@@ -586,25 +750,19 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
       h ^= seedStr.charCodeAt(i);
       h = Math.imul(h, 16777619);
     }
-    const norm = Math.abs(h % 1000) / 1000; // 0..1
+    const norm = Math.abs(h % 1000) / 1000;
     const oddA = Number((1.48 + norm * 1.35).toFixed(2));
     const oddB = Number((3.15 - norm * 1.25).toFixed(2));
-    const oddDraw = Number((3.10 + (norm * 0.65)).toFixed(2));
-    return [Math.max(1.35, oddA), oddDraw, Math.max(1.40, oddB)];
+    const oddDraw = Number((3.1 + norm * 0.65).toFixed(2));
+    return [Math.max(1.35, oddA), oddDraw, Math.max(1.4, oddB)];
   }
 
-  async function fetchRealGlobalMatches(): Promise<any[]> {
+  async function fetchRealGlobalMatches() {
     const now = Date.now();
     if (cachedLiveMatches.length > 0 && now - lastMatchesFetchTime < 35000) {
       return cachedLiveMatches;
     }
-
-    const sources: {
-      url: string;
-      sport: 'cricket' | 'football' | 'tennis' | 'basketball';
-      defaultLeague: string;
-      flag: string;
-    }[] = [
+    const sources = [
       {
         url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard',
         sport: 'football',
@@ -618,12 +776,6 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
         flag: '🇪🇺',
       },
       {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.europa/scoreboard',
-        sport: 'football',
-        defaultLeague: 'UEFA Europa League',
-        flag: '🇪🇺',
-      },
-      {
         url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard',
         sport: 'football',
         defaultLeague: 'English Premier League',
@@ -634,30 +786,6 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
         sport: 'football',
         defaultLeague: 'Spain LaLiga',
         flag: '🇪🇸',
-      },
-      {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard',
-        sport: 'football',
-        defaultLeague: 'Italy Serie A',
-        flag: '🇮🇹',
-      },
-      {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard',
-        sport: 'football',
-        defaultLeague: 'Germany Bundesliga',
-        flag: '🇩🇪',
-      },
-      {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard',
-        sport: 'football',
-        defaultLeague: 'France Ligue 1',
-        flag: '🇫🇷',
-      },
-      {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard',
-        sport: 'football',
-        defaultLeague: 'MLS',
-        flag: '🇺🇸',
       },
       {
         url: 'https://site.api.espn.com/apis/site/v2/sports/cricket/scoreboard',
@@ -677,79 +805,52 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
         defaultLeague: 'ATP Tour',
         flag: '🎾',
       },
-      {
-        url: 'https://site.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard',
-        sport: 'tennis',
-        defaultLeague: 'WTA Tour',
-        flag: '🎾',
-      },
     ];
 
     const matchMap = new Map<string, any>();
 
-    const parseCompetition = (
-      comp: any,
-      ev: any,
-      sport: 'cricket' | 'football' | 'tennis' | 'basketball',
-      leagueName: string,
-      flag: string
-    ) => {
+    const parseCompetition = (comp: any, ev: any, sport: string, leagueName: string, flag: string) => {
       const competitors = comp?.competitors;
       if (!Array.isArray(competitors) || competitors.length < 2) return;
-
       const home = competitors.find((c: any) => c.homeAway === 'home') || competitors[0];
       const away = competitors.find((c: any) => c.homeAway === 'away') || competitors[1];
-
       const teamA =
         home?.team?.shortDisplayName ||
         home?.team?.displayName ||
         home?.athlete?.displayName ||
-        home?.athlete?.shortName ||
         'Team A';
       const teamB =
         away?.team?.shortDisplayName ||
         away?.team?.displayName ||
         away?.athlete?.displayName ||
-        away?.athlete?.shortName ||
         'Team B';
-
       if (teamA === 'TBD' || teamB === 'TBD') return;
-
       const teamACode =
         home?.team?.abbreviation ||
-        teamA
-          .replace(/[^A-Za-z]/g, '')
-          .slice(0, 3)
-          .toUpperCase() ||
+        teamA.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() ||
         'TMA';
       const teamBCode =
         away?.team?.abbreviation ||
-        teamB
-          .replace(/[^A-Za-z]/g, '')
-          .slice(0, 3)
-          .toUpperCase() ||
+        teamB.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() ||
         'TMB';
-
       const teamALogoUrl = home?.team?.logo || home?.athlete?.flag?.href || undefined;
       const teamBLogoUrl = away?.team?.logo || away?.athlete?.flag?.href || undefined;
-
       const statusObj = comp?.status || ev?.status;
-      const state = statusObj?.type?.state; // 'pre' | 'in' | 'post'
-      if (state === 'post') return; // Skip already finished matches; only show LIVE ('in') & UPCOMING ('pre')
-
+      const state = statusObj?.type?.state;
+      if (state === 'post') return;
       const dateStr = comp?.date || ev?.date;
       const parsedTime = dateStr ? new Date(dateStr).getTime() : now + 3600000;
       const isLive = state === 'in';
       const matchId = `real_${sport}_${comp?.id || ev?.id}`;
       if (matchMap.has(matchId)) return;
-
       const [defOddA, defOddDraw, defOddB] = deterministicHashOdds(`${teamA}_${teamB}_${matchId}`);
       const espnOdds = comp?.odds?.[0];
       const oddA = americanToDecimalOdds(espnOdds?.homeTeamOdds?.moneyLine, defOddA);
       const oddB = americanToDecimalOdds(espnOdds?.awayTeamOdds?.moneyLine, defOddB);
       const oddDraw = americanToDecimalOdds(espnOdds?.drawOdds?.moneyLine, defOddDraw);
-      const overUnderLine = espnOdds?.overUnder || (sport === 'football' ? 2.5 : sport === 'basketball' ? 224.5 : sport === 'tennis' ? 21.5 : 168.5);
-
+      const overUnderLine =
+        espnOdds?.overUnder ||
+        (sport === 'football' ? 2.5 : sport === 'basketball' ? 224.5 : sport === 'tennis' ? 21.5 : 168.5);
       const markets: any[] = [];
       if (sport === 'football') {
         markets.push({
@@ -761,14 +862,6 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
             { id: 'away_2', label: teamB, shortLabel: `2 (${teamBCode})`, odds: oddB },
           ],
         });
-        markets.push({
-          id: 'm_goals',
-          name: `Total Goals (${overUnderLine})`,
-          options: [
-            { id: 'over', label: `Over ${overUnderLine}`, shortLabel: `Over ${overUnderLine}`, odds: 1.85 },
-            { id: 'under', label: `Under ${overUnderLine}`, shortLabel: `Under ${overUnderLine}`, odds: 1.95 },
-          ],
-        });
       } else {
         markets.push({
           id: 'm_winner',
@@ -778,30 +871,17 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
             { id: 'away_win', label: teamB, shortLabel: teamBCode, odds: oddB },
           ],
         });
-        markets.push({
-          id: 'm_total',
-          name:
-            sport === 'cricket'
-              ? `1st Innings Runs (${overUnderLine})`
-              : sport === 'basketball'
-              ? `Total Points (${overUnderLine})`
-              : `Total Games (${overUnderLine})`,
-          options: [
-            { id: 'over', label: `Over ${overUnderLine}`, shortLabel: `O ${overUnderLine}`, odds: 1.88 },
-            { id: 'under', label: `Under ${overUnderLine}`, shortLabel: `U ${overUnderLine}`, odds: 1.92 },
-          ],
-        });
       }
-
+      markets.push({
+        id: 'm_total',
+        name: `Total (${overUnderLine})`,
+        options: [
+          { id: 'over', label: `Over ${overUnderLine}`, shortLabel: `O ${overUnderLine}`, odds: 1.88 },
+          { id: 'under', label: `Under ${overUnderLine}`, shortLabel: `U ${overUnderLine}`, odds: 1.92 },
+        ],
+      });
       const sportIcon =
-        sport === 'cricket'
-          ? '🏏'
-          : sport === 'football'
-          ? '⚽'
-          : sport === 'tennis'
-          ? '🎾'
-          : '🏀';
-
+        sport === 'cricket' ? '🏏' : sport === 'football' ? '⚽' : sport === 'tennis' ? '🎾' : '🏀';
       matchMap.set(matchId, {
         id: matchId,
         sport,
@@ -819,14 +899,11 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
         status: isLive ? 'LIVE' : 'UPCOMING',
         liveScoreA: isLive ? String(home?.score ?? '0') : undefined,
         liveScoreB: isLive ? String(away?.score ?? '0') : undefined,
-        livePeriod: isLive
-          ? statusObj?.type?.shortDetail || statusObj?.type?.detail || 'LIVE'
-          : undefined,
+        livePeriod: isLive ? statusObj?.type?.shortDetail || 'LIVE' : undefined,
         markets,
       });
     };
 
-    // Fetch all ESPN endpoints in parallel with timeout
     await Promise.allSettled(
       sources.map(async (src) => {
         const controller = new AbortController();
@@ -837,113 +914,24 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
           const data: any = await resp.json();
           const leagueTitle = data?.leagues?.[0]?.name || src.defaultLeague;
           const events = Array.isArray(data?.events) ? data.events : [];
-
           for (const ev of events) {
             if (Array.isArray(ev?.competitions)) {
               for (const comp of ev.competitions) {
                 parseCompetition(comp, ev, src.sport, leagueTitle, src.flag);
               }
             }
-            if (Array.isArray(ev?.groupings)) {
-              for (const grp of ev.groupings) {
-                const grpComps = Array.isArray(grp?.competitions) ? grp.competitions : [];
-                for (const comp of grpComps) {
-                  parseCompetition(
-                    comp,
-                    ev,
-                    src.sport,
-                    `${ev?.name || leagueTitle}`,
-                    src.flag
-                  );
-                }
-              }
-            }
           }
-        } catch {
-          // ignore single league failure
-        } finally {
-          clearTimeout(timer);
-        }
-      })
-    );
-
-    // Also fetch Today & Tomorrow Cricket Matches from TheSportsDB public API
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-    await Promise.allSettled(
-      [todayStr, tomorrowStr].map(async (dayStr) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5000);
-        try {
-          const resp = await fetch(
-            `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${dayStr}&s=Cricket`,
-            { signal: controller.signal }
-          );
-          if (!resp.ok) return;
-          const data: any = await resp.json();
-          const events = Array.isArray(data?.events) ? data.events : [];
-          for (const ev of events) {
-            if (!ev?.strHomeTeam || !ev?.strAwayTeam) continue;
-            if (ev?.strStatus === 'Match Finished' || ev?.strStatus === 'FT') continue;
-            const matchId = `tsdb_cricket_${ev.idEvent}`;
-            if (matchMap.has(matchId)) continue;
-
-            const timeStr = ev.strTimestamp || `${ev.dateEvent}T${ev.strTime || '14:00:00'}Z`;
-            const parsedTime = new Date(timeStr).getTime() || Date.now() + 7200000;
-            const isLive =
-              parsedTime <= Date.now() &&
-              ev.strStatus !== 'Not Started' &&
-              ev.strStatus !== 'NS';
-
-            const [oddA, , oddB] = deterministicHashOdds(`${ev.strHomeTeam}_${ev.strAwayTeam}`);
-            const codeA = ev.strHomeTeam.slice(0, 3).toUpperCase();
-            const codeB = ev.strAwayTeam.slice(0, 3).toUpperCase();
-
-            matchMap.set(matchId, {
-              id: matchId,
-              sport: 'cricket',
-              tournament: ev.strLeague || 'International Cricket',
-              countryFlag: '🏏',
-              teamA: ev.strHomeTeam,
-              teamACode: codeA,
-              teamALogo: '🏏',
-              teamALogoUrl: ev.strHomeTeamBadge || undefined,
-              teamB: ev.strAwayTeam,
-              teamBCode: codeB,
-              teamBLogo: '🏏',
-              teamBLogoUrl: ev.strAwayTeamBadge || undefined,
-              startsAt: parsedTime,
-              status: isLive ? 'LIVE' : 'UPCOMING',
-              liveScoreA: isLive && ev.intHomeScore != null ? String(ev.intHomeScore) : undefined,
-              liveScoreB: isLive && ev.intAwayScore != null ? String(ev.intAwayScore) : undefined,
-              livePeriod: isLive ? ev.strProgress || 'Live In Play' : undefined,
-              markets: [
-                {
-                  id: 'm_winner',
-                  name: isLive ? 'Live Match Winner' : 'Match Winner',
-                  options: [
-                    { id: 'home_win', label: ev.strHomeTeam, shortLabel: codeA, odds: oddA },
-                    { id: 'away_win', label: ev.strAwayTeam, shortLabel: codeB, odds: oddB },
-                  ],
-                },
-              ],
-            });
-          }
-        } catch {
-          // ignore
-        } finally {
+        } catch {} finally {
           clearTimeout(timer);
         }
       })
     );
 
     const results = Array.from(matchMap.values()).sort((a, b) => {
-      // Sort LIVE matches first, then UPCOMING by soonest start time
       if (a.status === 'LIVE' && b.status !== 'LIVE') return -1;
       if (a.status !== 'LIVE' && b.status === 'LIVE') return 1;
       return a.startsAt - b.startsAt;
     });
-
     cachedLiveMatches = results;
     lastMatchesFetchTime = now;
     return results;
@@ -952,22 +940,12 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
   app.get('/api/sports/live-matches', async (_req, res) => {
     try {
       const matches = await fetchRealGlobalMatches();
-      return res.json({
-        ok: true,
-        fetchedAt: Date.now(),
-        count: matches.length,
-        matches,
-      });
+      return res.json({ ok: true, fetchedAt: Date.now(), count: matches.length, matches });
     } catch (err: any) {
-      return res.status(500).json({
-        ok: false,
-        error: err?.message || 'Failed to fetch live matches',
-        matches: [],
-      });
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch live matches', matches: [] });
     }
   });
 
-  // Vite middleware in development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

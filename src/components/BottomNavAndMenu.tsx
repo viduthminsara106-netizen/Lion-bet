@@ -130,7 +130,7 @@ export const LionBetSiteLoader: React.FC<{ onFinished: () => void }> = ({ onFini
 };
 
 interface BottomTabBarProps {
-  activePage: 'lobby' | 'game' | 'sports';
+  activePage: 'lobby' | 'game' | 'mines' | 'sports';
   isMenuOpen: boolean;
   activeSlipsCount?: number;
   onSelectHome: () => void;

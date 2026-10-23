@@ -25,6 +25,7 @@ interface GamesLobbyProps {
   currentUser: User;
   activePlayersCount?: number;
   onSelectBalloonCrash: (soundEnabled?: boolean) => void;
+  onSelectMines?: () => void;
   onSelectSportsBetting?: () => void;
   onOpenCashier: (tab?: 'deposit' | 'withdraw') => void;
   onOpenLeaderboard: () => void;
@@ -67,16 +68,6 @@ const COMING_SOON_GAMES: ComingSoonGame[] = [
     accentText: 'text-rose-400',
   },
   {
-    id: 'lanka_mines',
-    title: 'Lanka Mines',
-    subtitle: 'Instant • Grid',
-    category: 'instant',
-    categoryLabel: 'Instant & Mines',
-    icon: '💎',
-    gradient: 'from-emerald-950 via-slate-900 to-teal-950',
-    accentText: 'text-emerald-400',
-  },
-  {
     id: 'plinko_gold',
     title: 'Lion Plinko',
     subtitle: 'Instant • Drop',
@@ -111,7 +102,7 @@ const COMING_SOON_GAMES: ComingSoonGame[] = [
 const CATEGORIES: { id: GameCategory; label: string; badge: string }[] = [
   { id: 'all', label: 'All Casino Games', badge: '7' },
   { id: 'crash', label: '🔥 Crash Games', badge: '3' },
-  { id: 'instant', label: '⚡ Instant & Mines', badge: '2' },
+  { id: 'instant', label: '💎 Mines & Instant', badge: 'LIVE' },
   { id: 'slots', label: '🎰 Slots', badge: '1' },
   { id: 'table', label: '🃏 Table & Live', badge: '1' },
   { id: 'sports', label: '🏏⚽ Match Bet Slip (Separate Tab)', badge: 'LIVE' },
@@ -121,6 +112,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   currentUser,
   activePlayersCount = 0,
   onSelectBalloonCrash,
+  onSelectMines,
   onSelectSportsBetting,
   onOpenCashier,
   onOpenLeaderboard,
@@ -194,8 +186,10 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       : 'Ready to Fly!';
 
   const showBalloonCrash = selectedCategory === 'all' || selectedCategory === 'crash';
+  const showMinesGame = selectedCategory === 'all' || selectedCategory === 'instant';
   const showSportsBetting = selectedCategory === 'all' || selectedCategory === 'sports';
   const sportsOnlineCount = Math.max(31, totalOnlineInGame + 14);
+  const minesOnlineCount = Math.max(24, totalOnlineInGame - 9);
   const filteredComingSoon =
     selectedCategory === 'all'
       ? COMING_SOON_GAMES
@@ -333,6 +327,216 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
             handleLaunchBalloonCrash();
           }}
           className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 hover:from-amber-300 hover:to-rose-400 text-slate-950 font-black text-xs tracking-wide shadow flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95"
+        >
+          <Play className="w-3.5 h-3.5 fill-slate-950" />
+          <span>PLAY</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderLankaMinesCard = () => (
+    <div
+      onClick={() => onSelectMines?.()}
+      className="group relative rounded-2xl overflow-hidden border-2 border-emerald-500/80 hover:border-emerald-400 bg-slate-900 shadow-lg hover:shadow-emerald-500/35 transition-all duration-200 cursor-pointer flex flex-col justify-between"
+    >
+      {/* Creative 3D-Styled Lanka Mines Lobby Cover Artwork */}
+      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#040b16] flex flex-col items-center justify-center">
+        {/* Radial Emerald & Gold Vault Glow */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 50% 42%, rgba(16, 185, 129, 0.45), rgba(6, 78, 59, 0.2) 48%, transparent 72%), radial-gradient(circle at 78% 72%, rgba(244, 63, 94, 0.35), transparent 52%), radial-gradient(circle at 22% 28%, rgba(245, 158, 11, 0.25), transparent 45%)',
+          }}
+        />
+
+        {/* Custom Illustrated 5x5 Vault Grid + 3D Emerald & Naval Mine SVG Cover */}
+        <svg
+          viewBox="0 0 240 300"
+          className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500"
+        >
+          <defs>
+            <linearGradient id="minesBgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#022c22" stopOpacity="0.65" />
+              <stop offset="55%" stopColor="#0f172a" stopOpacity="0.85" />
+              <stop offset="100%" stopColor="#020617" stopOpacity="0.98" />
+            </linearGradient>
+            <linearGradient id="gemFacetTop" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#a7f3d0" />
+              <stop offset="50%" stopColor="#34d399" />
+              <stop offset="100%" stopColor="#059669" />
+            </linearGradient>
+            <linearGradient id="gemFacetBody" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#34d399" />
+              <stop offset="60%" stopColor="#10b981" />
+              <stop offset="100%" stopColor="#065f46" />
+            </linearGradient>
+            <radialGradient id="bombBodyGrad" cx="38%" cy="35%" r="65%">
+              <stop offset="0%" stopColor="#475569" />
+              <stop offset="55%" stopColor="#1e293b" />
+              <stop offset="100%" stopColor="#020617" />
+            </radialGradient>
+            <linearGradient id="goldTextGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#fef08a" />
+              <stop offset="50%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#b45309" />
+            </linearGradient>
+          </defs>
+
+          <rect width="240" height="300" fill="url(#minesBgGrad)" />
+
+          {/* Perspective 5x5 Vault Grid Background */}
+          <g transform="translate(22, 62)" opacity="0.85">
+            {Array.from({ length: 25 }).map((_, i) => {
+              const r = Math.floor(i / 5);
+              const c = i % 5;
+              const x = c * 40;
+              const y = r * 34;
+              const isHighlightGem = i === 6 || i === 8 || i === 12 || i === 16;
+              const isHighlightBomb = i === 13 || i === 18;
+              return (
+                <rect
+                  key={i}
+                  x={x}
+                  y={y}
+                  width="35"
+                  height="29"
+                  rx="6"
+                  fill={
+                    isHighlightGem
+                      ? 'rgba(16, 185, 129, 0.28)'
+                      : isHighlightBomb
+                      ? 'rgba(244, 63, 94, 0.28)'
+                      : 'rgba(15, 23, 42, 0.85)'
+                  }
+                  stroke={
+                    isHighlightGem
+                      ? '#34d399'
+                      : isHighlightBomb
+                      ? '#fb7185'
+                      : 'rgba(51, 65, 85, 0.7)'
+                  }
+                  strokeWidth="1.5"
+                />
+              );
+            })}
+          </g>
+
+          {/* Giant Hero 3D Faceted Emerald Diamond (Left-Center) */}
+          <g transform="translate(34, 88)">
+            <circle cx="52" cy="54" r="46" fill="#10b981" fillOpacity="0.22" />
+            <polygon
+              points="28,12 76,12 98,38 52,98 6,38"
+              fill="url(#gemFacetBody)"
+              stroke="#a7f3d0"
+              strokeWidth="2.5"
+            />
+            <polygon points="28,12 76,12 66,38 38,38" fill="url(#gemFacetTop)" />
+            <polygon points="6,38 28,12 38,38" fill="#6ee7b7" fillOpacity="0.8" />
+            <polygon points="98,38 76,12 66,38" fill="#059669" fillOpacity="0.9" />
+            <polygon points="38,38 66,38 52,98" fill="#34d399" fillOpacity="0.65" />
+            {/* Diamond Sparkles */}
+            <circle cx="22" cy="18" r="3" fill="#ffffff" />
+            <circle cx="88" cy="24" r="2.5" fill="#fef08a" />
+          </g>
+
+          {/* Spiked Naval Mine with Burning Fuse (Right-Bottom) */}
+          <g transform="translate(122, 118)">
+            <circle cx="46" cy="48" r="38" fill="#f43f5e" fillOpacity="0.24" />
+            {/* Spikes */}
+            <line x1="46" y1="8" x2="46" y2="88" stroke="#f43f5e" strokeWidth="5.5" strokeLinecap="round" />
+            <line x1="6" y1="48" x2="86" y2="48" stroke="#f43f5e" strokeWidth="5.5" strokeLinecap="round" />
+            <line x1="17" y1="19" x2="75" y2="77" stroke="#fb7185" strokeWidth="5" strokeLinecap="round" />
+            <line x1="75" y1="19" x2="17" y2="77" stroke="#fb7185" strokeWidth="5" strokeLinecap="round" />
+            {/* Bomb Sphere */}
+            <circle
+              cx="46"
+              cy="48"
+              r="27"
+              fill="url(#bombBodyGrad)"
+              stroke="#fb7185"
+              strokeWidth="2.5"
+            />
+            {/* Specular Highlight */}
+            <ellipse cx="36" cy="37" rx="8" ry="5" fill="#94a3b8" fillOpacity="0.45" transform="rotate(-25 36 37)" />
+            {/* Glowing Red Core */}
+            <circle cx="46" cy="48" r="9" fill="#ef4444" />
+            <circle cx="46" cy="48" r="4" fill="#fef08a" />
+          </g>
+
+          {/* Bold Arcade Title Emblem inside Cover */}
+          <text
+            x="120"
+            y="244"
+            textAnchor="middle"
+            fill="url(#goldTextGrad)"
+            fontSize="24"
+            fontWeight="900"
+            letterSpacing="2"
+          >
+            LANKA MINES
+          </text>
+          <text
+            x="120"
+            y="262"
+            textAnchor="middle"
+            fill="#6ee7b7"
+            fontSize="10"
+            fontWeight="800"
+            letterSpacing="1.5"
+          >
+            5x5 EMERALD VAULT • LKR
+          </text>
+        </svg>
+
+        {/* Subtle bottom vignette */}
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-transparent to-slate-950/35 pointer-events-none" />
+
+        {/* Top Live Badge + Online Count & Min Bet Rs. 10 Tag */}
+        <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 z-10">
+          <div className="flex flex-col items-start gap-1">
+            <span className="px-2 py-0.5 rounded-md bg-red-600/95 text-white text-[9px] font-black uppercase tracking-wider shadow-md flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+              LIVE
+            </span>
+            <span className="px-2 py-0.5 rounded-md bg-emerald-950/95 border border-emerald-500/80 text-emerald-400 text-[9px] font-black tracking-wide shadow-[0_0_10px_rgba(16,185,129,0.35)] flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <Users className="w-2.5 h-2.5 text-emerald-400" />
+              <span>{minesOnlineCount} Online</span>
+            </span>
+          </div>
+          <span className="px-1.5 py-0.5 rounded-md bg-slate-950/90 border border-emerald-400/60 text-emerald-300 text-[8px] font-black uppercase shadow">
+            MIN Rs. 10
+          </span>
+        </div>
+
+        {/* Bottom Floating Emblem Tag */}
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between z-10">
+          <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 backdrop-blur-sm border border-emerald-400/50 text-emerald-200 text-[9px] font-extrabold tracking-wide">
+            💎 Reveal Gems • Avoid Mines!
+          </span>
+        </div>
+      </div>
+
+      {/* Compact Card Footer */}
+      <div className="p-2.5 bg-slate-950 flex flex-col gap-2">
+        <div>
+          <h3 className="text-xs sm:text-sm font-black text-white truncate">
+            Lanka Mines
+          </h3>
+          <span className="text-[10px] text-emerald-400 font-bold block">
+            Min Bet Rs. 10 • LKR
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectMines?.();
+          }}
+          className="w-full py-2 rounded-xl bg-gradient-to-r from-emerald-400 via-teal-500 to-amber-400 hover:from-emerald-300 hover:to-amber-300 text-slate-950 font-black text-xs tracking-wide shadow flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95"
         >
           <Play className="w-3.5 h-3.5 fill-slate-950" />
           <span>PLAY</span>
@@ -676,21 +880,22 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           ===================================================================== */}
       {selectedCategory === 'all' ? (
         <div className="space-y-6">
-          {/* Category 1: Crash Games */}
+          {/* Category 1: Crash & Featured Live Games */}
           <div className="space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
               <div className="flex items-center gap-2">
                 <Flame className="w-4 h-4 text-amber-400" />
                 <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-amber-400">
-                  Crash Games
+                  Featured Live &amp; Crash Games
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-bold">
-                  1 Live • 2 Soon
+                  2 Live • 2 Soon
                 </span>
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5">
               {renderBalloonCrashCard()}
+              {renderLankaMinesCard()}
               {COMING_SOON_GAMES.filter((g) => g.category === 'crash').map(renderComingSoonCard)}
             </div>
           </div>
@@ -704,11 +909,12 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
                   Instant &amp; Mines Games
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold">
-                  Coming Soon
+                  1 Live • Min Bet Rs. 10 LKR
                 </span>
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5">
+              {renderLankaMinesCard()}
               {COMING_SOON_GAMES.filter((g) => g.category === 'instant').map(renderComingSoonCard)}
             </div>
           </div>
@@ -743,6 +949,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5">
             {showBalloonCrash && renderBalloonCrashCard()}
+            {showMinesGame && renderLankaMinesCard()}
             {showSportsBetting && renderSportsBettingCard()}
             {filteredComingSoon.map(renderComingSoonCard)}
           </div>

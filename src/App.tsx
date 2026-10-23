@@ -35,6 +35,7 @@ import {
   fetchCashAgentsWithPresence,
   getTimeBasedCrashCrowd,
   syncUsersWithServer,
+  syncAdminSettingsWithServer,
   getUrlReferralCode,
   creditReferrerCommission,
 } from './services/storage';
@@ -65,6 +66,7 @@ import { GamesLobby } from './components/GamesLobby';
 import { ProfileModal } from './components/ProfileModal';
 import { CashAgentPanelModal } from './components/CashAgentPanelModal';
 import { SportsBettingView } from './components/SportsBettingView';
+import { MinesGameView } from './components/MinesGameView';
 import {
   LionBetSiteLoader,
   BottomTabBar,
@@ -83,7 +85,7 @@ export default function App() {
   // App States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasActiveAuthSession());
   const [currentUser, setCurrentUserState] = useState<User>(getCurrentUser());
-  const [activePage, setActivePage] = useState<'lobby' | 'game' | 'sports'>('lobby');
+  const [activePage, setActivePage] = useState<'lobby' | 'game' | 'mines' | 'sports'>('lobby');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('lionbet_theme_mode_v2');
     return saved === 'dark' || saved === 'light' ? saved : 'dark';
@@ -120,31 +122,43 @@ export default function App() {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  // Real-time presence heartbeat & referral tracking sync for logged-in user/agent on the site
+  // Real-time presence heartbeat, cross-device agent/user sync, & admin settings sync
   useEffect(() => {
-    if (!currentUser?.id) return;
-    recordUserPresenceHeartbeat(currentUser);
     fetchCashAgentsWithPresence().catch(() => {});
+    syncAdminSettingsWithServer()
+      .then((s) => setAdminSettings(s))
+      .catch(() => {});
 
     const syncUserAndReferrals = async () => {
       await syncUsersWithServer().catch(() => {});
+      const latestSettings = await syncAdminSettingsWithServer().catch(() => null);
+      if (latestSettings) {
+        setAdminSettings(latestSettings);
+      }
+      if (!currentUser?.id) return;
       const latestMe = getUsers().find((u) => u.id === currentUser.id);
       if (
         latestMe &&
         (latestMe.referralCount !== currentUser.referralCount ||
           latestMe.referralEarnings !== currentUser.referralEarnings ||
           latestMe.unclaimedReferralRewards !== currentUser.unclaimedReferralRewards ||
-          latestMe.balance !== currentUser.balance)
+          latestMe.balance !== currentUser.balance ||
+          latestMe.role !== currentUser.role)
       ) {
         currentUserRef.current = latestMe;
         setCurrentUserState(latestMe);
       }
     };
 
+    if (currentUser?.id) {
+      recordUserPresenceHeartbeat(currentUser);
+    }
     syncUserAndReferrals();
 
     const interval = setInterval(() => {
-      recordUserPresenceHeartbeat(currentUserRef.current);
+      if (currentUserRef.current?.id) {
+        recordUserPresenceHeartbeat(currentUserRef.current);
+      }
       syncUserAndReferrals();
     }, 6000);
 
@@ -1875,11 +1889,63 @@ export default function App() {
             }
             setActivePage('game');
           }}
+          onSelectMines={() => setActivePage('mines')}
           onSelectSportsBetting={() => setActivePage('sports')}
           onOpenCashier={handleOpenCashier}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           onOpenReferral={() => setIsReferralOpen(true)}
           onOpenProfile={() => setIsProfileOpen(true)}
+        />
+      ) : activePage === 'mines' ? (
+        <MinesGameView
+          currentUser={currentUser}
+          adminSettings={adminSettings}
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
+          onBackToLobby={() => setActivePage('lobby')}
+          onOpenCashier={handleOpenCashier}
+          onOpenAdmin={() => setIsAdminOpen(true)}
+          onPlaceBetDeduction={(betAmount) => {
+            const latest = currentUserRef.current;
+            if (latest.balance < betAmount) return false;
+            const newBal = Number((latest.balance - betAmount).toFixed(2));
+            const updated: User = {
+              ...latest,
+              balance: newBal,
+              totalWagered: Number((latest.totalWagered + betAmount).toFixed(2)),
+            };
+            const finalUpdated = creditReferrerCommission(updated, betAmount, 'bet').referredUpdated;
+            currentUserRef.current = finalUpdated;
+            setCurrentUserState(finalUpdated);
+            saveUser(finalUpdated);
+            return true;
+          }}
+          onCreditWin={(winAmount, multiplier) => {
+            const latest = currentUserRef.current;
+            const newBal = Number((latest.balance + winAmount).toFixed(2));
+            const updated: User = {
+              ...latest,
+              balance: newBal,
+              totalWon: Number((latest.totalWon + winAmount).toFixed(2)),
+            };
+            currentUserRef.current = updated;
+            setCurrentUserState(updated);
+            saveUser(updated);
+            pushNotification({
+              title: `💎 Lanka Mines Cashout (${multiplier.toFixed(2)}x)!`,
+              message: `You cashed out Rs. ${winAmount.toLocaleString('en-LK', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} LKR in Lanka Mines!`,
+              category: 'win',
+              badgeText: `+Rs. ${winAmount.toLocaleString()}`,
+            });
+          }}
+          onRecordBetHistory={(record) => {
+            addBetRecord(record);
+            setBetHistory(getBetHistory());
+            setLeaderboard(getLeaderboard());
+          }}
         />
       ) : activePage === 'sports' ? (
         <SportsBettingView

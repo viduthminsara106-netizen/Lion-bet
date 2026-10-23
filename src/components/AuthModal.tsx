@@ -110,7 +110,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const normalizePhone = (val: string) => val.replace(/\s+/g, '').replace(/^\+94/, '0');
+  const normalizePhone = (val: string) => {
+    const d = val.replace(/[\s\-()]/g, '');
+    if (d.startsWith('+94') && d.length >= 11) return '0' + d.slice(3);
+    if (d.startsWith('94') && d.length === 11) return '0' + d.slice(2);
+    if (/^7\d{8}$/.test(d)) return '0' + d;
+    return d;
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +124,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const cleanId = loginIdentifier.trim();
     const cleanPhone = normalizePhone(cleanId);
+    const cleanIdLower = cleanId.toLowerCase();
+    const cleanIdCompact = cleanIdLower.replace(/[\s_]+/g, '');
 
     // Sync latest Admin-created Cash Agents & Users/Referrals from server before checking credentials
     await Promise.all([
@@ -169,21 +177,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Match user by Mobile Number, Email, Username, or Agent ID
-    const found = users.find(
-      (u) =>
-        (u.mobile && normalizePhone(u.mobile) === cleanPhone) ||
-        u.email.toLowerCase() === cleanId.toLowerCase() ||
-        u.username.toLowerCase() === cleanId.toLowerCase() ||
-        u.id.toLowerCase() === cleanId.toLowerCase()
-    );
+    // 1. Try server-authoritative login first so accounts/agents created on another device are always found
+    let serverFoundUser: User | null = null;
+    let serverAuthError: string | null = null;
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: cleanId, password: loginPassword }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data?.ok && data?.user) {
+        serverFoundUser = data.user as User;
+      } else if (resp.status === 401 || resp.status === 403) {
+        serverAuthError = data?.error || null;
+      }
+    } catch {}
+
+    // 2. Match user locally by Mobile Number, Agent Contact, Email, Username, or Agent ID
+    const localFound = users.find((u) => {
+      const uPhone = u.mobile ? normalizePhone(u.mobile) : '';
+      const uContact = u.agentContact ? normalizePhone(u.agentContact) : '';
+      const uNameLower = u.username.trim().toLowerCase();
+      const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
+      return (
+        (cleanPhone && (uPhone === cleanPhone || uContact === cleanPhone)) ||
+        (u.mobile && u.mobile.trim().toLowerCase() === cleanIdLower) ||
+        (u.agentContact && u.agentContact.trim().toLowerCase() === cleanIdLower) ||
+        u.email.trim().toLowerCase() === cleanIdLower ||
+        uNameLower === cleanIdLower ||
+        uNameCompact === cleanIdCompact ||
+        u.id.toLowerCase() === cleanIdLower
+      );
+    });
+
+    const found = serverFoundUser || localFound;
 
     if (!found) {
-      setError('Account not found. Please check your Mobile Number, Email, or Agent Login ID.');
+      setError(
+        serverAuthError ||
+          'Account not found. Please check your Mobile Number, Username, Email, or Agent Login ID.'
+      );
       return;
     }
 
-    if (found.password && found.password !== loginPassword) {
+    if (
+      !serverFoundUser &&
+      found.password &&
+      found.password.trim() !== loginPassword.trim() &&
+      found.password !== loginPassword
+    ) {
       setError('Incorrect password. Please try again.');
       return;
     }
@@ -202,6 +245,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       localStorage.removeItem(REMEMBER_STORAGE_KEY);
     }
 
+    saveUser(found);
     setCurrentUser(found);
     recordUserPresenceHeartbeat(found);
     onLoginSuccess(found);

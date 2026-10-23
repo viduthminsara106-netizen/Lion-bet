@@ -14,6 +14,7 @@ import {
 import {
   getUsers,
   saveUser,
+  saveUserAndSync,
   deleteUser,
   getCurrentUser,
   getAdminSettings,
@@ -22,6 +23,7 @@ import {
   DEFAULT_MINES_CONFIG,
   getTransactions,
   saveTransactions,
+  syncTransactionsWithServer,
   getBetHistory,
   fetchCashAgentsWithPresence,
   getCashAgentsSync,
@@ -132,22 +134,34 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       setBetHistoryList(getBetHistory());
       setSettings(getAdminSettings());
       setAgentPresenceList(getCashAgentsSync());
-      const [freshAgents, , syncedSettings] = await Promise.all([
+      const [freshAgents, , syncedSettings, syncedTx] = await Promise.all([
         fetchCashAgentsWithPresence().catch(() => getCashAgentsSync()),
         syncUsersWithServer().catch(() => getUsers()),
         syncAdminSettingsWithServer().catch(() => getAdminSettings()),
+        syncTransactionsWithServer().catch(() => getTransactions()),
       ]);
       if (mounted) {
         setAgentPresenceList(freshAgents);
         setUsersList(getUsers());
         setSettings(syncedSettings);
+        setTransactionsList(syncedTx);
+      }
+    };
+
+    const handleStorageUpdate = () => {
+      if (mounted) {
+        setUsersList(getUsers());
+        setAgentPresenceList(getCashAgentsSync());
+        setTransactionsList(getTransactions());
       }
     };
 
     loadAll();
+    window.addEventListener('storage', handleStorageUpdate);
     const interval = setInterval(loadAll, 3000);
     return () => {
       mounted = false;
+      window.removeEventListener('storage', handleStorageUpdate);
       clearInterval(interval);
     };
   }, [isOpen]);
@@ -164,26 +178,32 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setTransactionsList(getTransactions());
     setBetHistoryList(getBetHistory());
     setAgentPresenceList(getCashAgentsSync());
-    fetchCashAgentsWithPresence()
-      .then((fresh) => {
-        setAgentPresenceList(fresh);
+    Promise.all([
+      syncUsersWithServer().catch(() => getUsers()),
+      fetchCashAgentsWithPresence().catch(() => getCashAgentsSync()),
+      syncTransactionsWithServer().catch(() => getTransactions()),
+    ])
+      .then(([, freshAgents, freshTx]) => {
+        setAgentPresenceList(freshAgents);
         setUsersList(getUsers());
+        setTransactionsList(freshTx);
       })
       .catch(() => {});
   };
 
-  // Create Cash Agent Handler (Persists immediately to server so agent can log in from ANY device)
+  // Create Cash Agent Handler (Persists immediately to Cloud Firestore & Server so agent can log in from ANY device)
   const handleCreateCashAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = agentName.trim();
     const rawMobile = agentMobile.trim().replace(/\s+/g, '');
-    const cleanMobile = rawMobile.startsWith('+94') && rawMobile.length >= 11
-      ? '0' + rawMobile.slice(3)
-      : rawMobile.startsWith('94') && rawMobile.length === 11
-      ? '0' + rawMobile.slice(2)
-      : /^7\d{8}$/.test(rawMobile)
-      ? '0' + rawMobile
-      : rawMobile;
+    const cleanMobile =
+      rawMobile.startsWith('+94') && rawMobile.length >= 11
+        ? '0' + rawMobile.slice(3)
+        : rawMobile.startsWith('94') && rawMobile.length === 11
+        ? '0' + rawMobile.slice(2)
+        : /^7\d{8}$/.test(rawMobile)
+        ? '0' + rawMobile
+        : rawMobile;
     const cleanEmail =
       agentEmail.trim().toLowerCase() ||
       `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}@lionbet.lk`;
@@ -194,13 +214,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       return;
     }
 
+    await syncUsersWithServer().catch(() => {});
     const existing = getUsers().find(
       (u) =>
         (u.mobile && u.mobile === cleanMobile) ||
         u.username.toLowerCase() === cleanName.toLowerCase()
     );
     if (existing) {
-      // If user already exists, upgrade them to this Agent role & credentials and sync to server!
+      // If user already exists, upgrade them to this Agent role & credentials and sync to Cloud Firestore & Server!
       const upgradedAgent: User = {
         ...existing,
         username: cleanName,
@@ -213,20 +234,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         isBanned: false,
         updatedAt: Date.now(),
       };
-      saveUser(upgradedAgent);
+      await saveUserAndSync(upgradedAgent);
       setAgentOnlineStatus(upgradedAgent.id, true);
-      await Promise.all([
-        fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user: upgradedAgent }),
-        }).catch(() => {}),
-        fetch('/api/agents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent: upgradedAgent }),
-        }).catch(() => {}),
-      ]);
       refreshAll();
       setAgentName('');
       setAgentMobile('');
@@ -260,20 +269,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       createdAt: Date.now(),
     };
 
-    saveUser(newAgent);
+    await saveUserAndSync(newAgent);
     setAgentOnlineStatus(newAgent.id, true);
-    await Promise.all([
-      fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: newAgent }),
-      }).catch(() => {}),
-      fetch('/api/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: newAgent }),
-      }).catch(() => {}),
-    ]);
     refreshAll();
     setAgentName('');
     setAgentMobile('');
@@ -287,16 +284,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const handleDeleteAgent = (agentId: string, username: string) => {
     deleteUser(agentId);
     refreshAll();
-    notify(`Removed Cash Agent "${username}".`);
+    notify(`Removed account "${username}" across all devices.`);
   };
 
   const handleCopyCredentials = (u: User) => {
-    const text = `Lion Bet Agent Login\nUsername: ${u.username}\nLogin Mobile/ID: ${u.mobile || u.email}\nPassword: ${u.password || '12345678'}\nRole: ${u.role.replace('_', ' ').toUpperCase()}`;
+    const text = `Lion Bet Login\nUsername: ${u.username}\nLogin Mobile/ID: ${u.mobile || u.email}\nPassword: ${u.password || '12345678'}\nRole: ${u.role.replace('_', ' ').toUpperCase()}`;
     navigator.clipboard.writeText(text);
     notify(`Copied login credentials for ${u.username}!`);
   };
 
-  const handleTransactionDecision = (txId: string, decision: 'completed' | 'rejected') => {
+  const handleTransactionDecision = async (txId: string, decision: 'completed' | 'rejected') => {
     const allTx = getTransactions();
     const targetTx = allTx.find((t) => t.id === txId);
     if (!targetTx || targetTx.status !== 'pending') return;
@@ -310,7 +307,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const targetUser = allUsers.find((u) => u.id === targetTx.userId) || getCurrentUser();
 
     if (targetTx.type === 'deposit' && decision === 'completed' && targetUser) {
-      const hasPromoRegistered = Boolean(targetUser.referredBy && targetUser.referredBy.trim().length > 0);
+      const hasPromoRegistered = Boolean(
+        targetUser.referredBy && targetUser.referredBy.trim().length > 0
+      );
       const isEligible1st = hasPromoRegistered && !targetUser.hasReceivedFirstDepositBonus;
       const bonusToAdd = isEligible1st ? targetTx.amount : 0;
       const updatedUser: User = {
@@ -324,7 +323,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         targetTx.amount,
         'deposit'
       );
-      saveUser(referredUpdated);
+      await saveUserAndSync(referredUpdated);
       if (referredUpdated.id === currentUser.id) {
         onUserUpdated?.(referredUpdated);
       }
@@ -338,7 +337,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         ...targetUser,
         balance: Number((targetUser.balance + targetTx.amount).toFixed(2)),
       };
-      saveUser(updatedUser);
+      await saveUserAndSync(updatedUser);
       if (updatedUser.id === currentUser.id) {
         onUserUpdated?.(updatedUser);
       }
@@ -349,7 +348,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       notify(`Transaction ${decision.toUpperCase()}!`);
     }
     setPreviewReceiptTx((prev) =>
-      prev && prev.id === txId ? { ...prev, status: decision, processedBy: currentUser.username } : prev
+      prev && prev.id === txId
+        ? { ...prev, status: decision, processedBy: currentUser.username }
+        : prev
     );
     refreshAll();
   };
@@ -369,19 +370,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     setUsersList(updated);
     const target = updated.find((u) => u.id === userId);
     if (target) {
-      saveUser(target);
-      await Promise.all([
-        fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user: target }),
-        }).catch(() => {}),
-        fetch('/api/agents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent: target }),
-        }).catch(() => {}),
-      ]);
+      await saveUserAndSync(target);
       if (target.id === currentUser.id) {
         onUserUpdated?.(target);
       }
@@ -394,39 +383,42 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     );
   };
 
-  const handleToggleBan = (userId: string) => {
-    const updated = usersList.map((u) => (u.id === userId ? { ...u, isBanned: !u.isBanned } : u));
+  const handleToggleBan = async (userId: string) => {
+    const updated = usersList.map((u) =>
+      u.id === userId ? { ...u, isBanned: !u.isBanned, updatedAt: Date.now() } : u
+    );
     setUsersList(updated);
     const target = updated.find((u) => u.id === userId);
-    if (target) saveUser(target);
+    if (target) await saveUserAndSync(target);
     notify(`${target?.username} is now ${target?.isBanned ? 'BANNED' : 'ACTIVE'}`);
   };
 
-  const handleSaveBalance = (userId: string) => {
+  const handleSaveBalance = async (userId: string) => {
     const val = parseFloat(balanceAmountInput);
     if (isNaN(val) || val < 0) return;
     const updated = usersList.map((u) =>
-      u.id === userId ? { ...u, balance: Number(val.toFixed(2)) } : u
+      u.id === userId ? { ...u, balance: Number(val.toFixed(2)), updatedAt: Date.now() } : u
     );
     setUsersList(updated);
     const target = updated.find((u) => u.id === userId);
     if (target) {
-      saveUser(target);
+      await saveUserAndSync(target);
       if (target.id === currentUser.id) {
         onUserUpdated?.(target);
       }
     }
     setEditBalanceUserId(null);
     setBalanceAmountInput('');
+    refreshAll();
     notify(`Balance updated to Rs. ${val.toLocaleString()} LKR for ${target?.username}`);
   };
 
-  const handleQuickAdjustBalance = (userId: string, delta: number) => {
+  const handleQuickAdjustBalance = async (userId: string, delta: number) => {
     const target = usersList.find((u) => u.id === userId);
     if (!target) return;
     const nextBalance = Math.max(0, Number((target.balance + delta).toFixed(2)));
-    const updatedUser: User = { ...target, balance: nextBalance };
-    saveUser(updatedUser);
+    const updatedUser: User = { ...target, balance: nextBalance, updatedAt: Date.now() };
+    await saveUserAndSync(updatedUser);
     if (updatedUser.id === currentUser.id) {
       onUserUpdated?.(updatedUser);
     }
@@ -852,7 +844,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       <th className="p-2.5 border-r border-slate-800 w-10 text-center">#</th>
                       <th className="p-2.5 border-r border-slate-800">User ID</th>
                       <th className="p-2.5 border-r border-slate-800">Username</th>
-                      <th className="p-2.5 border-r border-slate-800">Mobile / Email</th>
+                      <th className="p-2.5 border-r border-slate-800">Mobile / Login</th>
                       <th className="p-2.5 border-r border-slate-800">Role</th>
                       <th className="p-2.5 border-r border-slate-800">Balance (LKR)</th>
                       <th className="p-2.5 border-r border-slate-800">Bonus (LKR)</th>
@@ -879,10 +871,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             </div>
                           </td>
                           <td className="p-2.5 border-r border-slate-800/80">
-                            <span className="font-mono text-emerald-400 block text-[11px]">
+                            <span className="font-mono text-emerald-400 font-bold block text-[11px]">
                               {u.mobile || '-'}
                             </span>
-                            <span className="text-[10px] text-slate-500 block">{u.email}</span>
+                            <span className="text-[10px] text-slate-400 block">{u.email}</span>
+                            <span className="text-[10px] text-amber-300 font-mono block mt-0.5">
+                              Pass: {u.password || '12345678'}
+                            </span>
                           </td>
                           <td className="p-2.5 border-r border-slate-800/80">
                             <select
@@ -986,17 +981,30 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             </div>
                           </td>
                           <td className="p-2.5 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleBan(u.id)}
-                              className={`px-2.5 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                                u.isBanned
-                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                                  : 'bg-slate-800 text-slate-300 hover:text-white'
-                              }`}
-                            >
-                              {u.isBanned ? 'Banned' : 'Active / Ban'}
-                            </button>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const text = `LIONBET Login\nMobile: ${u.mobile || u.email}\nUsername: ${u.username}\nPassword: ${u.password || '12345678'}`;
+                                  navigator.clipboard?.writeText(text);
+                                  showToast(`Copied login details for ${u.username}!`);
+                                }}
+                                className="px-2 py-1 rounded bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-[10px] font-bold cursor-pointer"
+                              >
+                                Copy Login
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleBan(u.id)}
+                                className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
+                                  u.isBanned
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                    : 'bg-slate-800 text-slate-300 hover:text-white'
+                                }`}
+                              >
+                                {u.isBanned ? 'Banned' : 'Active'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

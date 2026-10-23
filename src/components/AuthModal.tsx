@@ -3,6 +3,7 @@ import { User } from '../types/game';
 import {
   getUsers,
   saveUser,
+  saveUserAndSync,
   setCurrentUser,
   fetchCashAgentsWithPresence,
   recordUserPresenceHeartbeat,
@@ -71,16 +72,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Shared Remember Me State
   const [rememberMe, setRememberMe] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
-  // Load remembered credentials, check referral link promo code, & sync Admin-created Cash Agents + Users
+  // Load remembered credentials, check referral link promo code, & sync Admin-created Cash Agents + Users from Cloud Firestore & Server
   useEffect(() => {
-    if (isOpen) {
-      fetchCashAgentsWithPresence().catch(() => {});
+    if (!isOpen) return;
+
+    setTab(initialTab);
+    const runSync = () => {
       syncUsersWithServer().catch(() => {});
-      setTab(initialTab);
-    }
+      fetchCashAgentsWithPresence().catch(() => {});
+    };
+    runSync();
+    const timer = setInterval(runSync, 3500);
 
     // Check URL or prop for referral / promo code auto-fill
     try {
@@ -106,6 +112,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setRememberMe(true);
       }
     } catch {}
+
+    return () => clearInterval(timer);
   }, [isOpen, initialTab, initialPromoCode]);
 
   if (!isOpen) return null;
@@ -120,48 +128,129 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
+    setIsSubmitting(true);
 
-    const cleanId = loginIdentifier.trim();
-    const cleanPhone = normalizePhone(cleanId);
-    const cleanIdLower = cleanId.toLowerCase();
-    const cleanIdCompact = cleanIdLower.replace(/[\s_]+/g, '');
+    try {
+      const cleanId = loginIdentifier.trim();
+      const cleanPhone = normalizePhone(cleanId);
+      const cleanIdLower = cleanId.toLowerCase();
+      const cleanIdCompact = cleanIdLower.replace(/[\s_]+/g, '');
 
-    // Sync latest Admin-created Cash Agents & Users/Referrals from server before checking credentials
-    await Promise.all([
-      fetchCashAgentsWithPresence().catch(() => {}),
-      syncUsersWithServer().catch(() => {}),
-    ]);
-    const users = getUsers();
+      // Sync latest Admin-created Cash Agents & Users from Cloud Firestore + Server before checking credentials
+      await Promise.all([
+        syncUsersWithServer().catch(() => {}),
+        fetchCashAgentsWithPresence().catch(() => {}),
+      ]);
+      const users = getUsers();
 
-    // Direct Admin Credentials Check: 0711452778 / 12345678
-    if (cleanPhone === '0711452778') {
-      if (loginPassword !== '12345678') {
-        setError('Invalid admin password.');
+      // Direct Admin Credentials Check: 0711452778 / 12345678
+      if (cleanPhone === '0711452778' || cleanIdLower === 'admin@balloon.lk' || cleanIdLower === 'admin@lionbet.lk') {
+        if (loginPassword !== '12345678') {
+          setError('Invalid admin password.');
+          return;
+        }
+        let adminUser = users.find((u) => u.role === 'admin' || u.id === 'user_admin_1');
+        if (!adminUser) {
+          adminUser = {
+            id: 'user_admin_1',
+            username: 'BalloonAdminLK',
+            mobile: '0711452778',
+            email: 'admin@balloon.lk',
+            password: '12345678',
+            role: 'admin',
+            balance: 150000.0,
+            referralCode: 'ADMINLK',
+            referralCount: 15,
+            referralEarnings: 32000.0,
+            unclaimedReferralRewards: 8500.0,
+            totalWagered: 120000.0,
+            totalWon: 135000.0,
+            isBanned: false,
+            avatar: '👑',
+            createdAt: Date.now(),
+          };
+          await saveUserAndSync(adminUser);
+        }
+        if (rememberMe) {
+          localStorage.setItem(
+            REMEMBER_STORAGE_KEY,
+            JSON.stringify({ identifier: cleanId, password: loginPassword })
+          );
+        } else {
+          localStorage.removeItem(REMEMBER_STORAGE_KEY);
+        }
+        setCurrentUser(adminUser);
+        recordUserPresenceHeartbeat(adminUser);
+        onLoginSuccess(adminUser);
+        onClose();
         return;
       }
-      let adminUser = users.find((u) => u.role === 'admin' || u.id === 'user_admin_1');
-      if (!adminUser) {
-        adminUser = {
-          id: 'user_admin_1',
-          username: 'BalloonAdminLK',
-          mobile: '0711452778',
-          email: 'admin@balloon.lk',
-          password: '12345678',
-          role: 'admin',
-          balance: 150000.0,
-          referralCode: 'ADMINLK',
-          referralCount: 15,
-          referralEarnings: 32000.0,
-          unclaimedReferralRewards: 8500.0,
-          totalWagered: 120000.0,
-          totalWon: 135000.0,
-          isBanned: false,
-          avatar: '👑',
-          createdAt: Date.now(),
-        };
-        saveUser(adminUser);
+
+      // 1. Try server-authoritative login first (which also syncs Cloud Firestore)
+      let serverFoundUser: User | null = null;
+      let serverAuthError: string | null = null;
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: cleanId, password: loginPassword }),
+        });
+        const data = await resp.json();
+        if (resp.ok && data?.ok && data?.user) {
+          serverFoundUser = data.user as User;
+        } else if (resp.status === 401 || resp.status === 403) {
+          serverAuthError = data?.error || null;
+        }
+      } catch {}
+
+      // 2. Match user in Cloud-synced local users by Mobile Number, Agent Contact, Email, Username, or Agent ID
+      const latestUsers = getUsers();
+      const localFound = latestUsers.find((u) => {
+        const uPhone = u.mobile ? normalizePhone(u.mobile) : '';
+        const uContact = u.agentContact ? normalizePhone(u.agentContact) : '';
+        const uNamePhone = u.username ? normalizePhone(u.username) : '';
+        const uNameLower = (u.username || '').trim().toLowerCase();
+        const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
+        const uEmailLower = (u.email || '').trim().toLowerCase();
+        return (
+          (cleanPhone &&
+            (uPhone === cleanPhone || uContact === cleanPhone || uNamePhone === cleanPhone)) ||
+          (u.mobile && u.mobile.trim().toLowerCase() === cleanIdLower) ||
+          (u.agentContact && u.agentContact.trim().toLowerCase() === cleanIdLower) ||
+          (uEmailLower && uEmailLower === cleanIdLower) ||
+          uNameLower === cleanIdLower ||
+          uNameCompact === cleanIdCompact ||
+          u.id.toLowerCase() === cleanIdLower
+        );
+      });
+
+      const found = serverFoundUser || localFound;
+
+      if (!found) {
+        setError(
+          serverAuthError ||
+            'Account not found. Please check your Mobile Number, Username, Email, or Agent Login ID.'
+        );
+        return;
       }
+
+      if (
+        !serverFoundUser &&
+        found.password &&
+        found.password.trim() !== loginPassword.trim() &&
+        found.password !== loginPassword
+      ) {
+        setError('Incorrect password. Please try again.');
+        return;
+      }
+
+      if (found.isBanned) {
+        setError('This account has been suspended by the administrator.');
+        return;
+      }
+
       if (rememberMe) {
         localStorage.setItem(
           REMEMBER_STORAGE_KEY,
@@ -170,90 +259,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       } else {
         localStorage.removeItem(REMEMBER_STORAGE_KEY);
       }
-      setCurrentUser(adminUser);
-      recordUserPresenceHeartbeat(adminUser);
-      onLoginSuccess(adminUser);
+
+      await saveUserAndSync(found);
+      setCurrentUser(found);
+      recordUserPresenceHeartbeat(found);
+      onLoginSuccess(found);
       onClose();
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // 1. Try server-authoritative login first so accounts/agents created on another device are always found
-    let serverFoundUser: User | null = null;
-    let serverAuthError: string | null = null;
-    try {
-      const resp = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: cleanId, password: loginPassword }),
-      });
-      const data = await resp.json();
-      if (resp.ok && data?.ok && data?.user) {
-        serverFoundUser = data.user as User;
-      } else if (resp.status === 401 || resp.status === 403) {
-        serverAuthError = data?.error || null;
-      }
-    } catch {}
-
-    // 2. Match user locally by Mobile Number, Agent Contact, Email, Username, or Agent ID
-    const localFound = users.find((u) => {
-      const uPhone = u.mobile ? normalizePhone(u.mobile) : '';
-      const uContact = u.agentContact ? normalizePhone(u.agentContact) : '';
-      const uNameLower = u.username.trim().toLowerCase();
-      const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
-      return (
-        (cleanPhone && (uPhone === cleanPhone || uContact === cleanPhone)) ||
-        (u.mobile && u.mobile.trim().toLowerCase() === cleanIdLower) ||
-        (u.agentContact && u.agentContact.trim().toLowerCase() === cleanIdLower) ||
-        u.email.trim().toLowerCase() === cleanIdLower ||
-        uNameLower === cleanIdLower ||
-        uNameCompact === cleanIdCompact ||
-        u.id.toLowerCase() === cleanIdLower
-      );
-    });
-
-    const found = serverFoundUser || localFound;
-
-    if (!found) {
-      setError(
-        serverAuthError ||
-          'Account not found. Please check your Mobile Number, Username, Email, or Agent Login ID.'
-      );
-      return;
-    }
-
-    if (
-      !serverFoundUser &&
-      found.password &&
-      found.password.trim() !== loginPassword.trim() &&
-      found.password !== loginPassword
-    ) {
-      setError('Incorrect password. Please try again.');
-      return;
-    }
-
-    if (found.isBanned) {
-      setError('This account has been suspended by the administrator.');
-      return;
-    }
-
-    if (rememberMe) {
-      localStorage.setItem(
-        REMEMBER_STORAGE_KEY,
-        JSON.stringify({ identifier: cleanId, password: loginPassword })
-      );
-    } else {
-      localStorage.removeItem(REMEMBER_STORAGE_KEY);
-    }
-
-    saveUser(found);
-    setCurrentUser(found);
-    recordUserPresenceHeartbeat(found);
-    onLoginSuccess(found);
-    onClose();
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
 
     const trimmedName = name.trim();
@@ -281,106 +300,114 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    await syncUsersWithServer().catch(() => {});
-    const users = getUsers();
-    if (
-      trimmedMobile === '0711452778' ||
-      users.some((u) => u.mobile && normalizePhone(u.mobile) === trimmedMobile)
-    ) {
-      setError('An account with this Mobile Number already exists.');
-      return;
-    }
-    if (users.some((u) => u.email.toLowerCase() === trimmedEmail)) {
-      setError('An account with this Email already exists.');
-      return;
-    }
-
-    const newReferralCode =
-      trimmedName
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, '')
-        .substring(0, 5) + Math.floor(100 + Math.random() * 900);
-
-    // Check Promo / Referral Code:
-    // Only users who register with a Promo / Referral Code qualify for the 100% 1st Deposit Bonus after depositing!
-    // Initial balance is strictly Rs. 0.00 until the user deposits or an Admin/Cash Agent updates their balance.
-    const cleanPromo = promoCode.trim().toUpperCase();
-    const referredByUser = cleanPromo
-      ? users.find(
-          (u) =>
-            u.referralCode.trim().toUpperCase() === cleanPromo ||
-            u.username.trim().toUpperCase() === cleanPromo
-        )
-      : undefined;
-
-    const avatars = ['🦁', '🪂', '💎', '🧑‍🚀', '⚡️', '👑', '🚀', '🎯', '🍀'];
-    const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)];
-
-    const canonicalReferredBy = referredByUser
-      ? referredByUser.referralCode.trim().toUpperCase()
-      : cleanPromo
-      ? cleanPromo
-      : undefined;
-
-    const newUser: User = {
-      id: 'user_' + Date.now(),
-      username: trimmedName,
-      mobile: trimmedMobile,
-      email: trimmedEmail,
-      password,
-      role: 'player',
-      balance: 0.0, // Initial balance is 0 until deposit or Admin/Agent balance update
-      bonusBalance: 0.0,
-      hasReceivedFirstDepositBonus: false,
-      referralCode: newReferralCode,
-      referredBy: canonicalReferredBy,
-      referralCount: 0,
-      referralEarnings: 0,
-      unclaimedReferralRewards: 0,
-      totalWagered: 0,
-      totalWon: 0,
-      totalDeposited: 0,
-      commissionGeneratedForReferrer: 0,
-      isBanned: false,
-      avatar: randomAvatar,
-      createdAt: Date.now(),
-    };
-
+    setIsSubmitting(true);
     try {
-      localStorage.removeItem('lionbet_pending_ref_code');
-    } catch {}
+      await syncUsersWithServer().catch(() => {});
+      const users = getUsers();
+      if (
+        trimmedMobile === '0711452778' ||
+        users.some((u) => u.mobile && normalizePhone(u.mobile) === trimmedMobile)
+      ) {
+        setError('An account with this Mobile Number already exists.');
+        return;
+      }
+      if (users.some((u) => (u.email || '').toLowerCase() === trimmedEmail)) {
+        setError('An account with this Email already exists.');
+        return;
+      }
 
-    if (rememberMe) {
-      localStorage.setItem(
-        REMEMBER_STORAGE_KEY,
-        JSON.stringify({ identifier: trimmedMobile, password })
-      );
-    } else {
-      localStorage.removeItem(REMEMBER_STORAGE_KEY);
-    }
+      const newReferralCode =
+        trimmedName
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '')
+          .substring(0, 5) + Math.floor(100 + Math.random() * 900);
 
-    // Save the newly registered user first
-    saveUser(newUser);
+      // Check Promo / Referral Code:
+      // Only users who register with a Promo / Referral Code qualify for the 100% 1st Deposit Bonus after depositing!
+      // Initial balance is strictly Rs. 0.00 until the user deposits or an Admin/Cash Agent updates their balance.
+      const cleanPromo = promoCode.trim().toUpperCase();
+      const referredByUser = cleanPromo
+        ? users.find(
+            (u) =>
+              (u.referralCode || '').trim().toUpperCase() === cleanPromo ||
+              (u.username || '').trim().toUpperCase() === cleanPromo
+          )
+        : undefined;
 
-    // Update the referrer's referral count & sync to server
-    if (referredByUser) {
-      const latestUsers = getUsers();
-      const actualReferredCount = latestUsers.filter(
-        (m) =>
-          m.id !== referredByUser.id &&
-          m.referredBy &&
-          m.referredBy.trim().toUpperCase() === referredByUser.referralCode.trim().toUpperCase()
-      ).length;
-      const updatedReferrer: User = {
-        ...referredByUser,
-        referralCount: Math.max((referredByUser.referralCount || 0) + 1, actualReferredCount),
+      const avatars = ['🦁', '🪂', '💎', '🧑‍🚀', '⚡️', '👑', '🚀', '🎯', '🍀'];
+      const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)];
+
+      const canonicalReferredBy = referredByUser
+        ? referredByUser.referralCode.trim().toUpperCase()
+        : cleanPromo
+        ? cleanPromo
+        : undefined;
+
+      const newUser: User = {
+        id: 'user_' + Date.now(),
+        username: trimmedName,
+        mobile: trimmedMobile,
+        email: trimmedEmail,
+        password,
+        role: 'player',
+        balance: 0.0, // Initial balance is 0 until deposit or Admin/Agent balance update
+        bonusBalance: 0.0,
+        hasReceivedFirstDepositBonus: false,
+        referralCode: newReferralCode,
+        referredBy: canonicalReferredBy,
+        referralCount: 0,
+        referralEarnings: 0,
+        unclaimedReferralRewards: 0,
+        totalWagered: 0,
+        totalWon: 0,
+        totalDeposited: 0,
+        commissionGeneratedForReferrer: 0,
+        isBanned: false,
+        avatar: randomAvatar,
+        updatedAt: Date.now(),
+        createdAt: Date.now(),
       };
-      saveUser(updatedReferrer);
-    }
 
-    setCurrentUser(newUser);
-    onLoginSuccess(newUser);
-    onClose();
+      try {
+        localStorage.removeItem('lionbet_pending_ref_code');
+      } catch {}
+
+      if (rememberMe) {
+        localStorage.setItem(
+          REMEMBER_STORAGE_KEY,
+          JSON.stringify({ identifier: trimmedMobile, password })
+        );
+      } else {
+        localStorage.removeItem(REMEMBER_STORAGE_KEY);
+      }
+
+      // Save the newly registered user & sync to Cloud Firestore + Server so it is immediately available on all devices
+      await saveUserAndSync(newUser);
+
+      // Update the referrer's referral count & sync to Cloud Firestore + Server
+      if (referredByUser) {
+        const latestUsers = getUsers();
+        const actualReferredCount = latestUsers.filter(
+          (m) =>
+            m.id !== referredByUser.id &&
+            m.referredBy &&
+            m.referredBy.trim().toUpperCase() === referredByUser.referralCode.trim().toUpperCase()
+        ).length;
+        const updatedReferrer: User = {
+          ...referredByUser,
+          referralCount: Math.max((referredByUser.referralCount || 0) + 1, actualReferredCount),
+          updatedAt: Date.now(),
+        };
+        await saveUserAndSync(updatedReferrer);
+      }
+
+      setCurrentUser(newUser);
+      recordUserPresenceHeartbeat(newUser);
+      onLoginSuccess(newUser);
+      onClose();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

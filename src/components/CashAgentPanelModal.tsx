@@ -3,8 +3,11 @@ import { User, Transaction, BetRecord } from '../types/game';
 import {
   getUsers,
   saveUser,
+  saveUserAndSync,
+  syncUsersWithServer,
   getTransactions,
   saveTransactions,
+  syncTransactionsWithServer,
   addTransaction,
   getBetHistory,
   isAgentOnlineLocally,
@@ -81,27 +84,58 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
   );
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+
+    const syncAll = async () => {
+      try {
+        const [syncedUsers, syncedTx] = await Promise.all([
+          syncUsersWithServer(),
+          syncTransactionsWithServer(),
+        ]);
+        setUsersList(syncedUsers);
+        setTransactionsList(syncedTx);
+      } catch {
+        setUsersList(getUsers());
+        setTransactionsList(getTransactions());
+      }
+      setBetHistoryList(getBetHistory());
+    };
+
+    setUsersList(getUsers());
+    setTransactionsList(getTransactions());
+    setBetHistoryList(getBetHistory());
+    setIsOnlineToUsers(isAgentOnlineLocally(currentUser.id));
+
+    syncAll();
+
+    fetchCashAgentsWithPresence()
+      .then((agents) => {
+        const me = agents.find((a) => a.id === currentUser.id);
+        if (me) {
+          setIsOnlineToUsers(Boolean(me.isOnline));
+        }
+      })
+      .catch(() => {});
+
+    if (currentUser.role === 'withdraw_agent') {
+      setAgentPage('withdraw_page');
+    } else if (currentUser.role === 'deposit_agent') {
+      setAgentPage('deposit_panel');
+    } else {
+      setAgentPage(initialMode);
+    }
+
+    const interval = setInterval(syncAll, 3000);
+    const handleStorage = () => {
       setUsersList(getUsers());
       setTransactionsList(getTransactions());
       setBetHistoryList(getBetHistory());
-      setIsOnlineToUsers(isAgentOnlineLocally(currentUser.id));
-      fetchCashAgentsWithPresence()
-        .then((agents) => {
-          const me = agents.find((a) => a.id === currentUser.id);
-          if (me) {
-            setIsOnlineToUsers(Boolean(me.isOnline));
-          }
-        })
-        .catch(() => {});
-      if (currentUser.role === 'withdraw_agent') {
-        setAgentPage('withdraw_page');
-      } else if (currentUser.role === 'deposit_agent') {
-        setAgentPage('deposit_panel');
-      } else {
-        setAgentPage(initialMode);
-      }
-    }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [isOpen, initialMode, currentUser.role, currentUser.id]);
 
   if (!isOpen) return null;
@@ -128,6 +162,12 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
     setUsersList(getUsers());
     setTransactionsList(getTransactions());
     setBetHistoryList(getBetHistory());
+    syncUsersWithServer()
+      .then((synced) => setUsersList(synced))
+      .catch(() => {});
+    syncTransactionsWithServer()
+      .then((syncedTx) => setTransactionsList(syncedTx))
+      .catch(() => {});
   };
 
   const playerAccounts = usersList.filter(
@@ -148,7 +188,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
       : betHistoryList.filter((b) => b.userId === selectedUserForBets);
 
   // Process Direct Deposit by Deposit Agent
-  const handleDirectDeposit = (e: React.FormEvent) => {
+  const handleDirectDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     const targetUser = usersList.find((u) => u.id === targetUserId);
@@ -174,7 +214,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
     };
 
     const { referredUpdated } = creditReferrerCommission(updatedUser, actionAmount, 'deposit');
-    saveUser(referredUpdated);
+    await saveUserAndSync(referredUpdated);
     if (referredUpdated.id === currentUser.id) {
       onUserUpdated(referredUpdated);
     }
@@ -206,7 +246,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
   };
 
   // Process Direct Withdrawal by Withdraw Agent
-  const handleDirectWithdrawal = (e: React.FormEvent) => {
+  const handleDirectWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     const targetUser = usersList.find((u) => u.id === targetUserId);
@@ -234,7 +274,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
       balance: Number((targetUser.balance - actionAmount).toFixed(2)),
     };
 
-    saveUser(updatedUser);
+    await saveUserAndSync(updatedUser);
     if (updatedUser.id === currentUser.id) {
       onUserUpdated(updatedUser);
     }
@@ -263,7 +303,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
   };
 
   // Approve or Reject Pending Deposit / Withdrawal Requests
-  const handleRequestDecision = (txId: string, decision: 'completed' | 'rejected') => {
+  const handleRequestDecision = async (txId: string, decision: 'completed' | 'rejected') => {
     const allTx = getTransactions();
     const targetTx = allTx.find((t) => t.id === txId);
     if (!targetTx || targetTx.status !== 'pending') return;
@@ -293,7 +333,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
         targetTx.amount,
         'deposit'
       );
-      saveUser(referredUpdated);
+      await saveUserAndSync(referredUpdated);
       if (referredUpdated.id === currentUser.id) {
         onUserUpdated(referredUpdated);
       }
@@ -305,7 +345,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
         ...targetUser,
         balance: Number((targetUser.balance + targetTx.amount).toFixed(2)),
       };
-      saveUser(updatedUser);
+      await saveUserAndSync(updatedUser);
       if (updatedUser.id === currentUser.id) {
         onUserUpdated(updatedUser);
       }
@@ -320,7 +360,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
   };
 
   // Agent Edit User Balance (Set Exact Balance or Add/Deduct)
-  const handleSaveExactBalance = (userId: string) => {
+  const handleSaveExactBalance = async (userId: string) => {
     const val = parseFloat(editBalanceValue);
     if (isNaN(val) || val < 0) {
       setErrorMsg('Please enter a valid non-negative balance.');
@@ -333,7 +373,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
       ...target,
       balance: Number(val.toFixed(2)),
     };
-    saveUser(updatedUser);
+    await saveUserAndSync(updatedUser);
     if (updatedUser.id === currentUser.id) {
       onUserUpdated(updatedUser);
     }
@@ -343,7 +383,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
     showToast(`Updated ${target.username}'s balance to Rs. ${val.toLocaleString()} LKR!`);
   };
 
-  const handleQuickAdjustBalance = (userId: string, delta: number) => {
+  const handleQuickAdjustBalance = async (userId: string, delta: number) => {
     const target = usersList.find((u) => u.id === userId);
     if (!target) return;
     const nextBalance = Math.max(0, Number((target.balance + delta).toFixed(2)));
@@ -351,7 +391,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
       ...target,
       balance: nextBalance,
     };
-    saveUser(updatedUser);
+    await saveUserAndSync(updatedUser);
     if (updatedUser.id === currentUser.id) {
       onUserUpdated(updatedUser);
     }

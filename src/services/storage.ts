@@ -10,13 +10,20 @@ import {
   Transaction,
   BetRecord,
 } from '../types/game';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 const USERS_STORAGE_KEY = 'balloon_users_lkr_db';
+const DELETED_USERS_STORAGE_KEY = 'balloon_deleted_users_lkr_v1';
 const CURRENT_USER_KEY = 'balloon_active_lkr_user';
 const ROUNDS_STORAGE_KEY = 'balloon_rounds_lkr_history';
 const ADMIN_SETTINGS_KEY = 'balloon_admin_lkr_settings';
 const TRANSACTIONS_KEY = 'balloon_lkr_transactions';
 const BET_HISTORY_KEY = 'balloon_lkr_bet_history';
+
+const FIRESTORE_BASE_URL = firebaseConfig?.projectId
+  ? `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`
+  : '';
+const FIRESTORE_API_KEY = firebaseConfig?.apiKey || '';
 
 // Initial users with LKR balances (Players start at Rs. 0 until deposit or Admin/Agent update)
 const INITIAL_USERS: User[] = [
@@ -378,33 +385,134 @@ export const INITIAL_CHAT: ChatMessage[] = [
 const REMOVED_FAKE_AGENT_IDS = new Set(['user_dep_agent_1', 'user_wd_agent_1']);
 const REMOVED_FAKE_AGENT_NAMES = new Set(['depositagent_01', 'withdrawagent_01']);
 const LOCAL_PRESENCE_KEY = 'winxcash_agent_presence_v1';
-const LOCAL_PRESENCE_TIMEOUT_MS = 45000;
 
 export interface CashAgentWithPresence extends User {
   isOnline: boolean;
   lastSeen?: number | null;
+  adminOnlineStatus?: boolean;
 }
 
 function isRemovedFakeAgent(u: { id?: string; username?: string }): boolean {
   if (!u) return false;
-  if (u.id && REMOVED_FAKE_AGENT_IDS.has(u.id)) return true;
+  if (u.id && (REMOVED_FAKE_AGENT_IDS.has(u.id) || u.id.startsWith('guest_'))) return true;
   if (u.username && REMOVED_FAKE_AGENT_NAMES.has(u.username.toLowerCase())) return true;
   return false;
 }
 
+function isAgentUserRole(role?: string): boolean {
+  return role === 'deposit_agent' || role === 'withdraw_agent' || role === 'cash_agent';
+}
+
+function getDeletedUserIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_USERS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed);
+    }
+  } catch {}
+  return new Set();
+}
+
+function saveDeletedUserIdsLocal(ids: Set<string>) {
+  try {
+    localStorage.setItem(DELETED_USERS_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  } catch {}
+}
+
+export async function pushUserToCloudFirestore(user: User): Promise<void> {
+  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY || !user || !user.id || isRemovedFakeAgent(user)) {
+    return;
+  }
+  try {
+    const docId = encodeURIComponent(user.id);
+    await fetch(`${FIRESTORE_BASE_URL}/lionbet_users/${docId}?key=${FIRESTORE_API_KEY}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          id: { stringValue: String(user.id) },
+          json: { stringValue: JSON.stringify(user) },
+          updatedAt: { integerValue: String(user.updatedAt || Date.now()) },
+        },
+      }),
+    });
+  } catch {}
+}
+
+async function deleteUserFromCloudFirestore(userId: string, deletedSet: Set<string>): Promise<void> {
+  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY || !userId) return;
+  try {
+    const docId = encodeURIComponent(userId);
+    await fetch(`${FIRESTORE_BASE_URL}/lionbet_users/${docId}?key=${FIRESTORE_API_KEY}`, {
+      method: 'DELETE',
+    });
+    await fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          ids: { stringValue: JSON.stringify(Array.from(deletedSet)) },
+          updatedAt: { integerValue: String(Date.now()) },
+        },
+      }),
+    });
+  } catch {}
+}
+
+async function fetchUsersFromCloudFirestore(): Promise<{ users: User[]; deletedIds: string[] }> {
+  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY) {
+    return { users: [], deletedIds: [] };
+  }
+  const users: User[] = [];
+  let deletedIds: string[] = [];
+  try {
+    const [usersRes, delRes] = await Promise.all([
+      fetch(`${FIRESTORE_BASE_URL}/lionbet_users?pageSize=300&key=${FIRESTORE_API_KEY}`),
+      fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`),
+    ]);
+    if (delRes.ok) {
+      const delData = await delRes.json();
+      const rawIds = delData?.fields?.ids?.stringValue;
+      if (rawIds) {
+        const parsed = JSON.parse(rawIds);
+        if (Array.isArray(parsed)) deletedIds = parsed;
+      }
+    }
+    if (usersRes.ok) {
+      const data = await usersRes.json();
+      const docs = Array.isArray(data?.documents) ? data.documents : [];
+      for (const d of docs) {
+        const rawJson = d?.fields?.json?.stringValue;
+        if (rawJson) {
+          try {
+            const u = JSON.parse(rawJson);
+            if (u && u.id && !isRemovedFakeAgent(u)) {
+              users.push(u as User);
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+  return { users, deletedIds };
+}
+
 export function getUsers(): User[] {
   try {
+    const deletedIds = getDeletedUserIds();
     const raw = localStorage.getItem(USERS_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(INITIAL_USERS));
-      return INITIAL_USERS;
+      const seeded = INITIAL_USERS.map((u) => ({ ...u, updatedAt: 0 }));
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(seeded));
+      return seeded;
     }
     const parsed: User[] = JSON.parse(raw);
     let updated = false;
 
-    // Purge any legacy pre-seeded fake agents
+    // Purge any legacy pre-seeded fake agents or guest accounts or deleted accounts
     const withoutFakeAgents = parsed.filter((u) => {
-      if (isRemovedFakeAgent(u)) {
+      if (!u || !u.id || isRemovedFakeAgent(u) || deletedIds.has(u.id)) {
         updated = true;
         return false;
       }
@@ -412,52 +520,66 @@ export function getUsers(): User[] {
     });
 
     const zeroBalMigrationDone = localStorage.getItem('lionbet_zero_initial_bal_v2') === '1';
+    const customAccountsStampDone = localStorage.getItem('lionbet_custom_accounts_stamp_v4') === '1';
 
     const migrated = withoutFakeAgents.map((u) => {
-      if (u.role === 'admin' || u.id === 'user_admin_1') {
-        if (u.mobile !== '0711452778' || u.password !== '12345678') {
+      let nextUser = { ...u };
+      if (nextUser.role === 'admin' || nextUser.id === 'user_admin_1') {
+        if (nextUser.mobile !== '0711452778' || nextUser.password !== '12345678') {
           updated = true;
-          return { ...u, mobile: '0711452778', password: '12345678' };
+          nextUser = { ...nextUser, mobile: '0711452778', password: '12345678' };
         }
       }
       if (
         !zeroBalMigrationDone &&
-        u.role === 'player' &&
-        !u.hasReceivedFirstDepositBonus &&
-        (u.id === 'user_player_1' || u.id.startsWith('user_1') || u.id.startsWith('guest_'))
+        nextUser.role === 'player' &&
+        !nextUser.hasReceivedFirstDepositBonus &&
+        nextUser.id === 'user_player_1'
       ) {
         updated = true;
-        return { ...u, balance: 0, bonusBalance: 0 };
+        nextUser = { ...nextUser, balance: 0, bonusBalance: 0 };
       }
-      return u;
+
+      // Stamp custom accounts / agents created on this device so they always upload to Cloud Firestore & Server
+      if (!customAccountsStampDone) {
+        const seedMatch = INITIAL_USERS.find((s) => s.id === nextUser.id);
+        const isCustomOrModified =
+          !seedMatch ||
+          isAgentUserRole(nextUser.role) ||
+          nextUser.role !== seedMatch.role ||
+          nextUser.password !== seedMatch.password ||
+          nextUser.mobile !== seedMatch.mobile ||
+          nextUser.username !== seedMatch.username;
+
+        if (isCustomOrModified) {
+          nextUser = {
+            ...nextUser,
+            password: nextUser.password || '12345678',
+            mobile: nextUser.mobile || nextUser.agentContact || '',
+            updatedAt: Math.max(nextUser.updatedAt || 0, nextUser.createdAt || 0, Date.now()),
+          };
+          updated = true;
+        } else if (seedMatch && nextUser.updatedAt === undefined) {
+          nextUser = { ...nextUser, updatedAt: 0 };
+          updated = true;
+        }
+      }
+
+      return nextUser;
     });
 
     for (const seedUser of INITIAL_USERS) {
-      if (!migrated.some((u) => u.id === seedUser.id)) {
-        migrated.push(seedUser);
+      if (!deletedIds.has(seedUser.id) && !migrated.some((u) => u.id === seedUser.id)) {
+        migrated.push({ ...seedUser, updatedAt: 0 });
         updated = true;
       }
     }
 
     if (!zeroBalMigrationDone) {
       localStorage.setItem('lionbet_zero_initial_bal_v2', '1');
-      try {
-        const curRaw = localStorage.getItem(CURRENT_USER_KEY);
-        if (curRaw) {
-          const curParsed: User = JSON.parse(curRaw);
-          if (
-            curParsed.role === 'player' &&
-            !curParsed.hasReceivedFirstDepositBonus &&
-            (curParsed.id === 'user_player_1' ||
-              curParsed.id.startsWith('user_1') ||
-              curParsed.id.startsWith('guest_'))
-          ) {
-            curParsed.balance = 0;
-            curParsed.bonusBalance = 0;
-            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(curParsed));
-          }
-        }
-      } catch {}
+    }
+    if (!customAccountsStampDone) {
+      localStorage.setItem('lionbet_custom_accounts_stamp_v4', '1');
     }
 
     // Dynamically sync referralCount with actual referred accounts
@@ -482,10 +604,17 @@ export function getUsers(): User[] {
   }
 }
 
-export function saveUser(updatedUser: User) {
-  if (isRemovedFakeAgent(updatedUser)) return;
+function saveUserLocalOnly(updatedUser: User): User {
+  const deletedIds = getDeletedUserIds();
+  if (deletedIds.has(updatedUser.id)) {
+    deletedIds.delete(updatedUser.id);
+    saveDeletedUserIdsLocal(deletedIds);
+  }
+
   const stampedUser: User = {
     ...updatedUser,
+    password: updatedUser.password || '12345678',
+    mobile: updatedUser.mobile || updatedUser.agentContact || '',
     updatedAt: Date.now(),
   };
   const users = getUsers();
@@ -522,6 +651,16 @@ export function saveUser(updatedUser: User) {
     window.dispatchEvent(new Event('storage'));
   } catch {}
 
+  return stampedUser;
+}
+
+export function saveUser(updatedUser: User) {
+  if (!updatedUser || !updatedUser.id || isRemovedFakeAgent(updatedUser)) return;
+  const stampedUser = saveUserLocalOnly(updatedUser);
+
+  // Sync directly to Cloud Firestore (shared across all devices & containers)
+  pushUserToCloudFirestore(stampedUser).catch(() => {});
+
   // Sync user & referral data with backend server across tabs/browsers/devices
   fetch('/api/users', {
     method: 'POST',
@@ -537,168 +676,280 @@ export function saveUser(updatedUser: User) {
   }).catch(() => {});
 }
 
-function isAgentUserRole(role?: string): boolean {
-  return role === 'deposit_agent' || role === 'withdraw_agent' || role === 'cash_agent';
+export async function saveUserAndSync(updatedUser: User): Promise<User> {
+  if (!updatedUser || !updatedUser.id || isRemovedFakeAgent(updatedUser)) return updatedUser;
+  const stampedUser = saveUserLocalOnly(updatedUser);
+
+  await Promise.all([
+    pushUserToCloudFirestore(stampedUser).catch(() => {}),
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: stampedUser }),
+    }).catch(() => {}),
+    fetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: stampedUser }),
+    }).catch(() => {}),
+  ]);
+
+  return stampedUser;
 }
 
+function mergeTwoUsersClient(existing: User, incoming: User): { merged: User; didChange: boolean } {
+  const locUpdated = Number(existing.updatedAt || 0);
+  const srvUpdated = Number(incoming.updatedAt || 0);
+  const incomingIsNewer = srvUpdated >= locUpdated;
+
+  const nextRole =
+    isAgentUserRole(incoming.role) && !isAgentUserRole(existing.role) && srvUpdated >= locUpdated
+      ? incoming.role
+      : isAgentUserRole(existing.role) && !isAgentUserRole(incoming.role) && locUpdated > srvUpdated
+      ? existing.role
+      : incomingIsNewer
+      ? incoming.role || existing.role
+      : existing.role || incoming.role;
+
+  const nextPassword = incomingIsNewer
+    ? incoming.password || existing.password || '12345678'
+    : existing.password || incoming.password || '12345678';
+  const nextMobile = incomingIsNewer
+    ? incoming.mobile || existing.mobile || incoming.agentContact || existing.agentContact
+    : existing.mobile || incoming.mobile || existing.agentContact || incoming.agentContact;
+  const nextEmail = incomingIsNewer
+    ? incoming.email || existing.email
+    : existing.email || incoming.email;
+  const nextUsername = incomingIsNewer
+    ? incoming.username || existing.username
+    : existing.username || incoming.username;
+  const nextAgentContact = incomingIsNewer
+    ? incoming.agentContact || existing.agentContact || nextMobile
+    : existing.agentContact || incoming.agentContact || nextMobile;
+  const nextIsBanned = incomingIsNewer ? Boolean(incoming.isBanned) : Boolean(existing.isBanned);
+
+  const nextBalance = incomingIsNewer
+    ? typeof incoming.balance === 'number'
+      ? incoming.balance
+      : existing.balance
+    : typeof existing.balance === 'number'
+    ? existing.balance
+    : incoming.balance;
+
+  const nextBonusBalance = incomingIsNewer
+    ? typeof incoming.bonusBalance === 'number'
+      ? incoming.bonusBalance
+      : existing.bonusBalance || 0
+    : typeof existing.bonusBalance === 'number'
+    ? existing.bonusBalance
+    : incoming.bonusBalance || 0;
+
+  const nextHasFirstBonus = Boolean(
+    existing.hasReceivedFirstDepositBonus || incoming.hasReceivedFirstDepositBonus
+  );
+
+  const nextReferralCount = Math.max(existing.referralCount || 0, incoming.referralCount || 0);
+  const nextReferralEarnings = Math.max(
+    existing.referralEarnings || 0,
+    incoming.referralEarnings || 0
+  );
+  const nextUnclaimed = incomingIsNewer
+    ? incoming.unclaimedReferralRewards ?? existing.unclaimedReferralRewards ?? 0
+    : existing.unclaimedReferralRewards ?? incoming.unclaimedReferralRewards ?? 0;
+  const nextReferredBy = existing.referredBy || incoming.referredBy;
+  const nextReferralCode = existing.referralCode || incoming.referralCode;
+  const nextTotalWagered = Math.max(existing.totalWagered || 0, incoming.totalWagered || 0);
+  const nextTotalWon = Math.max(existing.totalWon || 0, incoming.totalWon || 0);
+  const nextTotalDeposited = Math.max(existing.totalDeposited || 0, incoming.totalDeposited || 0);
+  const nextCommGen = Math.max(
+    existing.commissionGeneratedForReferrer || 0,
+    incoming.commissionGeneratedForReferrer || 0
+  );
+
+  const merged: User = {
+    ...existing,
+    ...(incomingIsNewer ? incoming : {}),
+    role: nextRole,
+    password: nextPassword,
+    mobile: nextMobile,
+    email: nextEmail,
+    username: nextUsername,
+    agentContact: nextAgentContact,
+    isBanned: nextIsBanned,
+    balance: Number((nextBalance ?? 0).toFixed(2)),
+    bonusBalance: Number((nextBonusBalance ?? 0).toFixed(2)),
+    hasReceivedFirstDepositBonus: nextHasFirstBonus,
+    referralCode: nextReferralCode,
+    referredBy: nextReferredBy,
+    referralCount: nextReferralCount,
+    referralEarnings: nextReferralEarnings,
+    unclaimedReferralRewards: nextUnclaimed,
+    totalWagered: nextTotalWagered,
+    totalWon: nextTotalWon,
+    totalDeposited: nextTotalDeposited,
+    commissionGeneratedForReferrer: nextCommGen,
+    updatedAt: Math.max(locUpdated, srvUpdated),
+  };
+
+  const didChange =
+    merged.role !== existing.role ||
+    merged.password !== existing.password ||
+    merged.mobile !== existing.mobile ||
+    merged.email !== existing.email ||
+    merged.username !== existing.username ||
+    merged.agentContact !== existing.agentContact ||
+    merged.isBanned !== existing.isBanned ||
+    merged.balance !== existing.balance ||
+    (merged.bonusBalance || 0) !== (existing.bonusBalance || 0) ||
+    Boolean(merged.hasReceivedFirstDepositBonus) !==
+      Boolean(existing.hasReceivedFirstDepositBonus) ||
+    merged.referralCount !== existing.referralCount ||
+    merged.referralEarnings !== existing.referralEarnings ||
+    merged.unclaimedReferralRewards !== existing.unclaimedReferralRewards ||
+    merged.referredBy !== existing.referredBy ||
+    merged.totalWagered !== existing.totalWagered ||
+    (merged.totalDeposited || 0) !== (existing.totalDeposited || 0) ||
+    (merged.commissionGeneratedForReferrer || 0) !==
+      (existing.commissionGeneratedForReferrer || 0);
+
+  return { merged, didChange };
+}
+
+let inFlightUsersSync: Promise<User[]> | null = null;
+
 export async function syncUsersWithServer(): Promise<User[]> {
-  let serverUsers: User[] = [];
-  try {
-    const res = await fetch('/api/users');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.users)) {
-        serverUsers = data.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u));
-      }
-    }
-  } catch {}
-
-  const localUsers = getUsers();
-  const mergedMap = new Map<string, User>();
-
-  for (const lu of localUsers) {
-    mergedMap.set(lu.id, lu);
+  if (inFlightUsersSync) {
+    return inFlightUsersSync;
   }
 
-  let changed = false;
-  for (const su of serverUsers) {
-    const existing = mergedMap.get(su.id);
-    if (!existing) {
-      mergedMap.set(su.id, su);
-      changed = true;
-    } else {
-      const srvUpdated = su.updatedAt || 0;
-      const locUpdated = existing.updatedAt || 0;
-      const serverIsNewer = srvUpdated >= locUpdated;
-
-      const nextRole =
-        isAgentUserRole(su.role) && !isAgentUserRole(existing.role)
-          ? su.role
-          : isAgentUserRole(existing.role) && !isAgentUserRole(su.role) && locUpdated > srvUpdated
-          ? existing.role
-          : serverIsNewer
-          ? su.role || existing.role
-          : existing.role;
-
-      const nextPassword = serverIsNewer
-        ? su.password || existing.password
-        : existing.password || su.password;
-      const nextMobile = serverIsNewer
-        ? su.mobile || existing.mobile
-        : existing.mobile || su.mobile;
-      const nextEmail = serverIsNewer
-        ? su.email || existing.email
-        : existing.email || su.email;
-      const nextUsername = serverIsNewer
-        ? su.username || existing.username
-        : existing.username || su.username;
-      const nextAgentContact = su.agentContact || existing.agentContact || nextMobile;
-      const nextIsBanned = serverIsNewer
-        ? Boolean(su.isBanned)
-        : Boolean(existing.isBanned);
-
-      const nextReferralCount = Math.max(existing.referralCount || 0, su.referralCount || 0);
-      const nextReferralEarnings = Math.max(existing.referralEarnings || 0, su.referralEarnings || 0);
-      const nextUnclaimed =
-        su.referralEarnings > existing.referralEarnings
-          ? su.unclaimedReferralRewards
-          : existing.unclaimedReferralRewards;
-      const nextReferredBy = existing.referredBy || su.referredBy;
-      const nextTotalWagered = Math.max(existing.totalWagered || 0, su.totalWagered || 0);
-      const nextTotalDeposited = Math.max(existing.totalDeposited || 0, su.totalDeposited || 0);
-      const nextCommGen = Math.max(
-        existing.commissionGeneratedForReferrer || 0,
-        su.commissionGeneratedForReferrer || 0
-      );
-
-      if (
-        nextRole !== existing.role ||
-        nextPassword !== existing.password ||
-        nextMobile !== existing.mobile ||
-        nextEmail !== existing.email ||
-        nextUsername !== existing.username ||
-        nextAgentContact !== existing.agentContact ||
-        nextIsBanned !== existing.isBanned ||
-        nextReferralCount !== existing.referralCount ||
-        nextReferralEarnings !== existing.referralEarnings ||
-        nextUnclaimed !== existing.unclaimedReferralRewards ||
-        nextReferredBy !== existing.referredBy ||
-        nextTotalWagered !== existing.totalWagered ||
-        nextTotalDeposited !== (existing.totalDeposited || 0) ||
-        nextCommGen !== (existing.commissionGeneratedForReferrer || 0)
-      ) {
-        mergedMap.set(su.id, {
-          ...existing,
-          ...su,
-          role: nextRole,
-          password: nextPassword,
-          mobile: nextMobile,
-          email: nextEmail,
-          username: nextUsername,
-          agentContact: nextAgentContact,
-          isBanned: nextIsBanned,
-          referralCount: nextReferralCount,
-          referralEarnings: nextReferralEarnings,
-          unclaimedReferralRewards: nextUnclaimed,
-          referredBy: nextReferredBy,
-          totalWagered: nextTotalWagered,
-          totalDeposited: nextTotalDeposited,
-          commissionGeneratedForReferrer: nextCommGen,
-          updatedAt: Math.max(locUpdated, srvUpdated),
-        });
-        changed = true;
-      }
-    }
-  }
-
-  const allUsers = Array.from(mergedMap.values());
-
-  // Recompute referralCount for every user based on actual referred team members
-  for (const u of allUsers) {
-    if (!u.referralCode) continue;
-    const codeUpper = u.referralCode.trim().toUpperCase();
-    const referredMembers = allUsers.filter(
-      (m) => m.id !== u.id && m.referredBy && m.referredBy.trim().toUpperCase() === codeUpper
-    );
-    if (referredMembers.length > (u.referralCount || 0)) {
-      u.referralCount = referredMembers.length;
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+  inFlightUsersSync = (async () => {
     try {
-      const rawCur = localStorage.getItem(CURRENT_USER_KEY);
-      if (rawCur) {
-        const parsedCur: User = JSON.parse(rawCur);
-        const latestCur = allUsers.find((u) => u.id === parsedCur.id);
-        if (latestCur) {
-          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestCur));
+      const [apiResult, cloudResult] = await Promise.all([
+        fetch('/api/users')
+          .then(async (res) => (res.ok ? res.json() : null))
+          .catch(() => null),
+        fetchUsersFromCloudFirestore().catch(() => ({ users: [] as User[], deletedIds: [] as string[] })),
+      ]);
+
+      const deletedIds = getDeletedUserIds();
+      let deletedChanged = false;
+      const incomingDeleted = [
+        ...(Array.isArray(apiResult?.deletedUserIds) ? apiResult.deletedUserIds : []),
+        ...(Array.isArray(cloudResult?.deletedIds) ? cloudResult.deletedIds : []),
+      ];
+      for (const did of incomingDeleted) {
+        if (did && !deletedIds.has(did)) {
+          deletedIds.add(did);
+          deletedChanged = true;
         }
       }
-      window.dispatchEvent(new Event('storage'));
-    } catch {}
-  }
+      if (deletedChanged) {
+        saveDeletedUserIdsLocal(deletedIds);
+      }
 
-  // Push any local users or local agents not yet on server
-  fetch('/api/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ users: allUsers }),
-  }).catch(() => {});
+      const serverUsers: User[] = Array.isArray(apiResult?.users)
+        ? apiResult.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id))
+        : [];
+      const cloudUsers: User[] = Array.isArray(cloudResult?.users)
+        ? cloudResult.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id))
+        : [];
 
-  for (const u of allUsers) {
-    if (isAgentUserRole(u.role) && !serverUsers.some((su) => su.id === u.id && isAgentUserRole(su.role))) {
-      fetch('/api/agents', {
+      // Re-read latest localUsers AFTER network calls so any saveUser() during fetch is never clobbered
+      const localUsers = getUsers().filter((u) => !deletedIds.has(u.id));
+      const mergedMap = new Map<string, User>();
+
+      for (const lu of localUsers) {
+        mergedMap.set(lu.id, lu);
+      }
+
+      let changed = deletedChanged;
+
+      // Merge both serverUsers and cloudUsers into mergedMap
+      for (const remoteUser of [...serverUsers, ...cloudUsers]) {
+        if (!remoteUser || !remoteUser.id || deletedIds.has(remoteUser.id)) continue;
+        const existing = mergedMap.get(remoteUser.id);
+        if (!existing) {
+          mergedMap.set(remoteUser.id, remoteUser);
+          changed = true;
+        } else {
+          const { merged, didChange } = mergeTwoUsersClient(existing, remoteUser);
+          if (didChange) {
+            mergedMap.set(remoteUser.id, merged);
+            changed = true;
+          }
+        }
+      }
+
+      const allUsers = Array.from(mergedMap.values()).filter((u) => !deletedIds.has(u.id));
+
+      // Recompute referralCount for every user based on actual referred team members
+      for (const u of allUsers) {
+        if (!u.referralCode) continue;
+        const codeUpper = u.referralCode.trim().toUpperCase();
+        const referredMembers = allUsers.filter(
+          (m) => m.id !== u.id && m.referredBy && m.referredBy.trim().toUpperCase() === codeUpper
+        );
+        if (referredMembers.length > (u.referralCount || 0)) {
+          u.referralCount = referredMembers.length;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+        try {
+          const rawCur = localStorage.getItem(CURRENT_USER_KEY);
+          if (rawCur) {
+            const parsedCur: User = JSON.parse(rawCur);
+            const latestCur = allUsers.find((u) => u.id === parsedCur.id);
+            if (latestCur) {
+              localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestCur));
+            }
+          }
+          window.dispatchEvent(new Event('storage'));
+        } catch {}
+      }
+
+      // Push any local users or agents that are missing or newer in Cloud Firestore / Server
+      const cloudMap = new Map<string, User>();
+      for (const cu of cloudUsers) cloudMap.set(cu.id, cu);
+
+      for (const u of allUsers) {
+        const cu = cloudMap.get(u.id);
+        const isMissingInCloud = !cu;
+        const isNewerLocally = (u.updatedAt || 0) > (cu?.updatedAt || 0);
+        const isAgentRoleMismatch = isAgentUserRole(u.role) && cu?.role !== u.role;
+        if (isMissingInCloud || isNewerLocally || isAgentRoleMismatch) {
+          pushUserToCloudFirestore(u).catch(() => {});
+        }
+      }
+
+      fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: u }),
+        body: JSON.stringify({ users: allUsers }),
       }).catch(() => {});
-    }
-  }
 
-  return allUsers;
+      for (const u of allUsers) {
+        if (
+          isAgentUserRole(u.role) &&
+          !serverUsers.some((su) => su.id === u.id && isAgentUserRole(su.role))
+        ) {
+          fetch('/api/agents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent: u }),
+          }).catch(() => {});
+        }
+      }
+
+      return allUsers;
+    } finally {
+      inFlightUsersSync = null;
+    }
+  })();
+
+  return inFlightUsersSync;
 }
 
 export function getReferredUsersList(referralCode: string): User[] {
@@ -725,7 +976,9 @@ export function getUrlReferralCode(): string {
     }
     if (window.location.hash) {
       const hashClean = window.location.hash.replace(/^#\/?/, '');
-      const hashParams = new URLSearchParams(hashClean.includes('?') ? hashClean.split('?')[1] : hashClean);
+      const hashParams = new URLSearchParams(
+        hashClean.includes('?') ? hashClean.split('?')[1] : hashClean
+      );
       const fromHash =
         hashParams.get('ref') || hashParams.get('promo') || hashParams.get('referral') || '';
       if (fromHash.trim()) {
@@ -800,8 +1053,18 @@ export function creditReferrerCommission(
 }
 
 export function deleteUser(userId: string) {
+  if (!userId) return;
+  const deletedIds = getDeletedUserIds();
+  deletedIds.add(userId);
+  saveDeletedUserIdsLocal(deletedIds);
+
   const users = getUsers().filter((u) => u.id !== userId);
   localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  try {
+    window.dispatchEvent(new Event('storage'));
+  } catch {}
+
+  deleteUserFromCloudFirestore(userId, deletedIds).catch(() => {});
 
   fetch(`/api/agents/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
@@ -924,6 +1187,20 @@ export function setAgentOnlineStatus(agentId: string, isOnline: boolean) {
       manualOffline: !isOnline,
     };
     localStorage.setItem(LOCAL_PRESENCE_KEY, JSON.stringify(map));
+
+    // Also persist adminOnlineStatus on the user record so Cloud Firestore & other devices see it immediately
+    const users = getUsers();
+    const idx = users.findIndex((u) => u.id === agentId);
+    if (idx >= 0) {
+      const updatedAgent = {
+        ...users[idx],
+        adminOnlineStatus: isOnline,
+        updatedAt: Date.now(),
+      } as User;
+      users[idx] = updatedAgent;
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+      pushUserToCloudFirestore(updatedAgent).catch(() => {});
+    }
     window.dispatchEvent(new Event('storage'));
   } catch {}
 
@@ -939,11 +1216,7 @@ export function clearUserPresenceOnLogout(userId: string) {
   try {
     const users = getUsers();
     const target = users.find((u) => u.id === userId);
-    const isAgent =
-      target &&
-      (target.role === 'deposit_agent' ||
-        target.role === 'withdraw_agent' ||
-        target.role === 'cash_agent');
+    const isAgent = target && isAgentUserRole(target.role);
     if (!isAgent) {
       const map = getLocalPresenceMap();
       map[userId] = {
@@ -962,6 +1235,11 @@ export function clearUserPresenceOnLogout(userId: string) {
 }
 
 export function isAgentOnlineLocally(agentId: string): boolean {
+  const users = getUsers();
+  const agentUser = users.find((u) => u.id === agentId) as CashAgentWithPresence | undefined;
+  if (agentUser && typeof agentUser.adminOnlineStatus === 'boolean') {
+    return agentUser.adminOnlineStatus;
+  }
   const map = getLocalPresenceMap();
   const entry = map[agentId];
   if (entry && typeof entry.manualOffline === 'boolean') {
@@ -976,10 +1254,7 @@ export function isAgentOnlineLocally(agentId: string): boolean {
 export function getCashAgentsSync(): CashAgentWithPresence[] {
   const users = getUsers();
   const agents = users.filter(
-    (u) =>
-      !isRemovedFakeAgent(u) &&
-      !u.isBanned &&
-      (u.role === 'deposit_agent' || u.role === 'withdraw_agent' || u.role === 'cash_agent')
+    (u) => !isRemovedFakeAgent(u) && !u.isBanned && isAgentUserRole(u.role)
   );
   const map = getLocalPresenceMap();
   return agents
@@ -992,41 +1267,34 @@ export function getCashAgentsSync(): CashAgentWithPresence[] {
 }
 
 export async function fetchCashAgentsWithPresence(): Promise<CashAgentWithPresence[]> {
-  let serverAgents: CashAgentWithPresence[] = [];
-  try {
-    const res = await fetch('/api/agents');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.agents)) {
-        serverAgents = data.agents.filter((a: any) => !isRemovedFakeAgent(a));
-      }
-    }
-  } catch {}
+  const [, serverAgents] = await Promise.all([
+    syncUsersWithServer().catch(() => getUsers()),
+    fetch('/api/agents')
+      .then(async (res) => {
+        if (!res.ok) return [] as CashAgentWithPresence[];
+        const data = await res.json();
+        return Array.isArray(data.agents)
+          ? (data.agents.filter((a: any) => !isRemovedFakeAgent(a)) as CashAgentWithPresence[])
+          : [];
+      })
+      .catch(() => [] as CashAgentWithPresence[]),
+  ]);
 
-  // Merge server agents into local users so Login / Admin Panel / Cashier stay in sync across tabs & browsers & devices
-  const localUsers = getUsers();
+  const deletedIds = getDeletedUserIds();
+  const localUsers = getUsers().filter((u) => !deletedIds.has(u.id));
   let localChanged = false;
+
   for (const sa of serverAgents) {
+    if (deletedIds.has(sa.id)) continue;
     const idx = localUsers.findIndex((u) => u.id === sa.id);
     const { isOnline, lastSeen, ...cleanUser } = sa;
     if (idx === -1) {
       localUsers.push(cleanUser as User);
       localChanged = true;
     } else {
-      const prev = localUsers[idx];
-      if (
-        prev.role !== cleanUser.role ||
-        prev.password !== cleanUser.password ||
-        prev.mobile !== cleanUser.mobile ||
-        prev.username !== cleanUser.username ||
-        prev.agentContact !== cleanUser.agentContact
-      ) {
-        localUsers[idx] = {
-          ...prev,
-          ...(cleanUser as User),
-          password: cleanUser.password || prev.password || '12345678',
-          mobile: cleanUser.mobile || prev.mobile || cleanUser.agentContact,
-        };
+      const { merged, didChange } = mergeTwoUsersClient(localUsers[idx], cleanUser as User);
+      if (didChange) {
+        localUsers[idx] = merged;
         localChanged = true;
       }
     }
@@ -1035,25 +1303,18 @@ export async function fetchCashAgentsWithPresence(): Promise<CashAgentWithPresen
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(localUsers));
   }
 
-  // Also push any local Admin-created agents that the server might not have yet
   const localAgents = localUsers.filter(
-    (u) =>
-      !isRemovedFakeAgent(u) &&
-      (u.role === 'deposit_agent' || u.role === 'withdraw_agent' || u.role === 'cash_agent')
+    (u) => !isRemovedFakeAgent(u) && !deletedIds.has(u.id) && isAgentUserRole(u.role)
   );
 
   for (const la of localAgents) {
     const srvMatch = serverAgents.find((sa) => sa.id === la.id);
     if (!srvMatch || srvMatch.password !== la.password || srvMatch.mobile !== la.mobile) {
+      pushUserToCloudFirestore(la).catch(() => {});
       fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: la }),
-      }).catch(() => {});
-      fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: la }),
       }).catch(() => {});
     }
   }
@@ -1067,10 +1328,13 @@ export async function fetchCashAgentsWithPresence(): Promise<CashAgentWithPresen
   const merged = localAgents
     .filter((u) => !u.isBanned)
     .map((ag) => {
+      const agWithStatus = ag as CashAgentWithPresence;
       const entry = localPresence[ag.id];
       const srv = serverOnlineMap.get(ag.id);
       let isOnline = true;
-      if (entry?.manualOffline === true) {
+      if (typeof agWithStatus.adminOnlineStatus === 'boolean') {
+        isOnline = agWithStatus.adminOnlineStatus;
+      } else if (entry?.manualOffline === true) {
         isOnline = false;
       } else if (srv !== undefined) {
         isOnline = Boolean(srv.isOnline);
@@ -1222,27 +1486,55 @@ export function saveAdminSettings(settings: AdminSettings) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ settings }),
   }).catch(() => {});
+  if (FIRESTORE_BASE_URL && FIRESTORE_API_KEY) {
+    fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/settings_v1?key=${FIRESTORE_API_KEY}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          json: { stringValue: JSON.stringify(settings) },
+          updatedAt: { integerValue: String(Date.now()) },
+        },
+      }),
+    }).catch(() => {});
+  }
 }
 
 export async function syncAdminSettingsWithServer(): Promise<AdminSettings> {
   try {
-    const res = await fetch('/api/settings');
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.settings && typeof data.settings === 'object') {
-        const current = getAdminSettings();
-        const merged: AdminSettings = {
-          ...current,
-          ...data.settings,
-          minesConfig: {
-            ...DEFAULT_MINES_CONFIG,
-            ...(current.minesConfig || {}),
-            ...(data.settings.minesConfig || {}),
-          },
-        };
-        localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(merged));
-        return merged;
-      }
+    const [apiRes, cloudRes] = await Promise.all([
+      fetch('/api/settings')
+        .then(async (r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+        ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/settings_v1?key=${FIRESTORE_API_KEY}`)
+            .then(async (r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    let cloudSettings: any = null;
+    const rawCloudJson = cloudRes?.fields?.json?.stringValue;
+    if (rawCloudJson) {
+      try {
+        cloudSettings = JSON.parse(rawCloudJson);
+      } catch {}
+    }
+
+    const remoteSettings = cloudSettings || apiRes?.settings;
+    if (remoteSettings && typeof remoteSettings === 'object') {
+      const current = getAdminSettings();
+      const merged: AdminSettings = {
+        ...current,
+        ...remoteSettings,
+        minesConfig: {
+          ...DEFAULT_MINES_CONFIG,
+          ...(current.minesConfig || {}),
+          ...(remoteSettings.minesConfig || {}),
+        },
+      };
+      localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(merged));
+      return merged;
     }
   } catch {}
   return getAdminSettings();
@@ -1474,14 +1766,93 @@ export function getTransactions(): Transaction[] {
   return initialTx;
 }
 
+function pushTransactionsToCloud(list: Transaction[]) {
+  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY) return;
+  try {
+    const compact = list.slice(0, 80).map((t) => ({
+      ...t,
+      receiptImage:
+        t.receiptImage && t.receiptImage.length > 60000 ? undefined : t.receiptImage,
+    }));
+    fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/transactions_v1?key=${FIRESTORE_API_KEY}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          json: { stringValue: JSON.stringify(compact) },
+          updatedAt: { integerValue: String(Date.now()) },
+        },
+      }),
+    }).catch(() => {});
+  } catch {}
+}
+
 export function addTransaction(tx: Transaction) {
-  const list = getTransactions();
+  const list = getTransactions().filter((t) => t.id !== tx.id);
   list.unshift(tx);
   localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(list));
+  fetch('/api/transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction: tx }),
+  }).catch(() => {});
+  pushTransactionsToCloud(list);
 }
 
 export function saveTransactions(list: Transaction[]) {
   localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(list));
+  fetch('/api/transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transactions: list }),
+  }).catch(() => {});
+  pushTransactionsToCloud(list);
+}
+
+export async function syncTransactionsWithServer(): Promise<Transaction[]> {
+  try {
+    const [apiRes, cloudRes] = await Promise.all([
+      fetch('/api/transactions')
+        .then(async (r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+        ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/transactions_v1?key=${FIRESTORE_API_KEY}`)
+            .then(async (r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    let cloudTx: Transaction[] = [];
+    const rawCloudJson = cloudRes?.fields?.json?.stringValue;
+    if (rawCloudJson) {
+      try {
+        const parsed = JSON.parse(rawCloudJson);
+        if (Array.isArray(parsed)) cloudTx = parsed;
+      } catch {}
+    }
+
+    const serverTx: Transaction[] = Array.isArray(apiRes?.transactions) ? apiRes.transactions : [];
+    const localTx = getTransactions();
+    const map = new Map<string, Transaction>();
+
+    for (const t of localTx) {
+      if (t && t.id) map.set(t.id, t);
+    }
+    for (const t of [...serverTx, ...cloudTx]) {
+      if (!t || !t.id) continue;
+      const existing = map.get(t.id);
+      if (!existing) {
+        map.set(t.id, t);
+      } else if (existing.status === 'pending' && t.status !== 'pending') {
+        map.set(t.id, { ...existing, ...t, receiptImage: existing.receiptImage || t.receiptImage });
+      }
+    }
+
+    const merged = Array.from(map.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(merged));
+    return merged;
+  } catch {}
+  return getTransactions();
 }
 
 export function getBetHistory(): BetRecord[] {

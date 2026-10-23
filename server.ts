@@ -13,13 +13,36 @@ const CHAT_HISTORY_FILE = path.join(__dirname, '.chat_history.json');
 const CASH_AGENTS_FILE = path.join(__dirname, '.cash_agents.json');
 const USERS_DB_FILE = path.join(__dirname, '.users_db.json');
 const ADMIN_SETTINGS_FILE = path.join(__dirname, '.admin_settings.json');
+const TRANSACTIONS_FILE = path.join(__dirname, '.transactions_db.json');
+const DELETED_USERS_FILE = path.join(__dirname, '.deleted_users.json');
+const FIREBASE_CONFIG_FILE = path.join(__dirname, 'firebase-applet-config.json');
 
 const FAKE_AGENT_IDS = new Set(['user_dep_agent_1', 'user_wd_agent_1']);
 const FAKE_AGENT_NAMES = new Set(['depositagent_01', 'withdrawagent_01']);
 
+function loadFirebaseRestConfig(): { projectId: string; apiKey: string; baseUrl: string } | null {
+  try {
+    if (fs.existsSync(FIREBASE_CONFIG_FILE)) {
+      const cfg = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, 'utf-8'));
+      if (cfg?.projectId && cfg?.apiKey) {
+        return {
+          projectId: cfg.projectId,
+          apiKey: cfg.apiKey,
+          baseUrl: `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/(default)/documents`,
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+const fbConfig = loadFirebaseRestConfig();
+
 function isFakeAgent(agent: any): boolean {
   if (!agent) return true;
-  if (agent.id && FAKE_AGENT_IDS.has(agent.id)) return true;
+  if (agent.id && (FAKE_AGENT_IDS.has(agent.id) || String(agent.id).startsWith('guest_'))) {
+    return true;
+  }
   if (agent.username && FAKE_AGENT_NAMES.has(String(agent.username).toLowerCase())) return true;
   return false;
 }
@@ -41,6 +64,22 @@ function normalizeSriLankaPhone(raw?: string): string {
     return '0' + digits;
   }
   return digits;
+}
+
+function loadDeletedUserIds(): Set<string> {
+  try {
+    if (fs.existsSync(DELETED_USERS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DELETED_USERS_FILE, 'utf-8'));
+      if (Array.isArray(parsed)) return new Set(parsed);
+    }
+  } catch {}
+  return new Set();
+}
+
+function saveDeletedUserIds(ids: Set<string>) {
+  try {
+    fs.writeFileSync(DELETED_USERS_FILE, JSON.stringify(Array.from(ids), null, 2), 'utf-8');
+  } catch {}
 }
 
 function loadCashAgents(): any[] {
@@ -83,6 +122,23 @@ function saveServerUsers(users: any[]) {
   } catch {}
 }
 
+function loadServerTransactions(): any[] {
+  try {
+    if (fs.existsSync(TRANSACTIONS_FILE)) {
+      const raw = fs.readFileSync(TRANSACTIONS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function saveServerTransactions(txList: any[]) {
+  try {
+    fs.writeFileSync(TRANSACTIONS_FILE, JSON.stringify(txList.slice(0, 250), null, 2), 'utf-8');
+  } catch {}
+}
+
 function loadServerAdminSettings(): any | null {
   try {
     if (fs.existsSync(ADMIN_SETTINGS_FILE)) {
@@ -97,6 +153,81 @@ function saveServerAdminSettings(settings: any) {
   try {
     fs.writeFileSync(ADMIN_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
   } catch {}
+}
+
+// Cloud Firestore Helpers (Shared across dev & preview containers and all devices)
+async function pushUserToFirestore(user: any): Promise<void> {
+  if (!fbConfig || !user || !user.id || isFakeAgent(user)) return;
+  try {
+    const docId = encodeURIComponent(String(user.id));
+    await fetch(`${fbConfig.baseUrl}/lionbet_users/${docId}?key=${fbConfig.apiKey}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          id: { stringValue: String(user.id) },
+          json: { stringValue: JSON.stringify(user) },
+          updatedAt: { integerValue: String(user.updatedAt || 0) },
+        },
+      }),
+    });
+  } catch {}
+}
+
+async function deleteUserFromFirestore(userId: string, deletedSet: Set<string>): Promise<void> {
+  if (!fbConfig || !userId) return;
+  try {
+    const docId = encodeURIComponent(String(userId));
+    await fetch(`${fbConfig.baseUrl}/lionbet_users/${docId}?key=${fbConfig.apiKey}`, {
+      method: 'DELETE',
+    });
+    await fetch(`${fbConfig.baseUrl}/lionbet_cloud/deleted_users?key=${fbConfig.apiKey}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          ids: { stringValue: JSON.stringify(Array.from(deletedSet)) },
+          updatedAt: { integerValue: String(Date.now()) },
+        },
+      }),
+    });
+  } catch {}
+}
+
+async function fetchCloudUsersAndDeleted(): Promise<{ users: any[]; deletedIds: string[] }> {
+  if (!fbConfig) return { users: [], deletedIds: [] };
+  const users: any[] = [];
+  let deletedIds: string[] = [];
+  try {
+    const [usersRes, delRes] = await Promise.all([
+      fetch(`${fbConfig.baseUrl}/lionbet_users?pageSize=300&key=${fbConfig.apiKey}`),
+      fetch(`${fbConfig.baseUrl}/lionbet_cloud/deleted_users?key=${fbConfig.apiKey}`),
+    ]);
+    if (delRes.ok) {
+      const delData = await delRes.json();
+      const rawIds = delData?.fields?.ids?.stringValue;
+      if (rawIds) {
+        const parsed = JSON.parse(rawIds);
+        if (Array.isArray(parsed)) deletedIds = parsed;
+      }
+    }
+    if (usersRes.ok) {
+      const data = await usersRes.json();
+      const docs = Array.isArray(data?.documents) ? data.documents : [];
+      for (const d of docs) {
+        const rawJson = d?.fields?.json?.stringValue;
+        if (rawJson) {
+          try {
+            const u = JSON.parse(rawJson);
+            if (u && u.id && !isFakeAgent(u)) {
+              users.push(u);
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+  return { users, deletedIds };
 }
 
 const DEFAULT_INITIAL_MESSAGES = [
@@ -152,41 +283,114 @@ async function startServer() {
   app.use(express.json({ limit: '5mb' }));
 
   let sharedChatMessages = loadChatHistory();
-  let cashAgents = loadCashAgents();
-  let serverUsers = loadServerUsers();
+  let deletedUserIds = loadDeletedUserIds();
+  let cashAgents = loadCashAgents().filter((a) => !deletedUserIds.has(a.id));
+  let serverUsers = loadServerUsers().filter((u) => !deletedUserIds.has(u.id));
+  let serverTransactions = loadServerTransactions();
   let serverAdminSettings = loadServerAdminSettings();
 
   const activePresence = new Map<string, { lastSeen: number; manualOffline?: boolean }>();
   const PRESENCE_TIMEOUT_MS = 45000;
   const sseClients = new Set<any>();
 
-  // Cross-sync cashAgents and serverUsers on boot so every Agent is always in serverUsers and vice versa
+  const mergeTwoUserRecords = (prev: any, u: any, isExplicitSingleSave: boolean) => {
+    const prevUpdatedAt = Number(prev.updatedAt || 0);
+    const incUpdatedAt = Number(u.updatedAt || 0);
+    const incomingWins = isExplicitSingleSave || incUpdatedAt >= prevUpdatedAt;
+
+    const resolvedRole = isExplicitSingleSave
+      ? u.role || prev.role
+      : isAgentRole(prev.role) && !isAgentRole(u.role) && incUpdatedAt <= prevUpdatedAt
+      ? prev.role
+      : isAgentRole(u.role) && !isAgentRole(prev.role) && incUpdatedAt >= prevUpdatedAt
+      ? u.role
+      : incomingWins
+      ? u.role || prev.role
+      : prev.role || u.role;
+
+    const resolvedPassword = incomingWins
+      ? u.password || prev.password || '12345678'
+      : prev.password || u.password || '12345678';
+
+    const resolvedMobile = incomingWins
+      ? u.mobile || prev.mobile || u.agentContact || prev.agentContact
+      : prev.mobile || u.mobile || prev.agentContact || u.agentContact;
+
+    const resolvedBalance = incomingWins
+      ? typeof u.balance === 'number'
+        ? u.balance
+        : prev.balance
+      : typeof prev.balance === 'number'
+      ? prev.balance
+      : u.balance;
+
+    const resolvedBonusBalance = incomingWins
+      ? typeof u.bonusBalance === 'number'
+        ? u.bonusBalance
+        : prev.bonusBalance || 0
+      : typeof prev.bonusBalance === 'number'
+      ? prev.bonusBalance
+      : u.bonusBalance || 0;
+
+    return {
+      ...prev,
+      ...(incomingWins ? u : {}),
+      username: incomingWins ? u.username || prev.username : prev.username || u.username,
+      email: incomingWins ? u.email || prev.email : prev.email || u.email,
+      role: resolvedRole,
+      password: resolvedPassword,
+      mobile: resolvedMobile,
+      agentContact: incomingWins
+        ? u.agentContact || prev.agentContact || resolvedMobile
+        : prev.agentContact || u.agentContact || resolvedMobile,
+      balance: Number((resolvedBalance ?? 0).toFixed(2)),
+      bonusBalance: Number((resolvedBonusBalance ?? 0).toFixed(2)),
+      hasReceivedFirstDepositBonus: Boolean(
+        prev.hasReceivedFirstDepositBonus || u.hasReceivedFirstDepositBonus
+      ),
+      referredBy: prev.referredBy || u.referredBy,
+      referralCode: prev.referralCode || u.referralCode,
+      referralCount: Math.max(prev.referralCount || 0, u.referralCount || 0),
+      referralEarnings: Math.max(prev.referralEarnings || 0, u.referralEarnings || 0),
+      unclaimedReferralRewards: incomingWins
+        ? u.unclaimedReferralRewards ?? prev.unclaimedReferralRewards ?? 0
+        : prev.unclaimedReferralRewards ?? u.unclaimedReferralRewards ?? 0,
+      totalWagered: Math.max(prev.totalWagered || 0, u.totalWagered || 0),
+      totalWon: Math.max(prev.totalWon || 0, u.totalWon || 0),
+      totalDeposited: Math.max(prev.totalDeposited || 0, u.totalDeposited || 0),
+      commissionGeneratedForReferrer: Math.max(
+        prev.commissionGeneratedForReferrer || 0,
+        u.commissionGeneratedForReferrer || 0
+      ),
+      isBanned: incomingWins ? Boolean(u.isBanned) : Boolean(prev.isBanned),
+      updatedAt: isExplicitSingleSave ? Date.now() : Math.max(prevUpdatedAt, incUpdatedAt),
+    };
+  };
+
+  // Cross-sync cashAgents and serverUsers so every Agent is always in serverUsers and vice versa
   const syncAgentsAndUsersLists = () => {
     let usersModified = false;
     let agentsModified = false;
 
+    serverUsers = serverUsers.filter((u) => u && u.id && !isFakeAgent(u) && !deletedUserIds.has(u.id));
+    cashAgents = cashAgents.filter((a) => a && a.id && !isFakeAgent(a) && !deletedUserIds.has(a.id));
+
     for (const ag of cashAgents) {
-      if (!ag || !ag.id || isFakeAgent(ag)) continue;
       const uIdx = serverUsers.findIndex((u) => u.id === ag.id);
       const { isOnline, lastSeen, ...cleanAg } = ag;
       if (uIdx === -1) {
         serverUsers.push(cleanAg);
         usersModified = true;
       } else {
-        const existing = serverUsers[uIdx];
-        serverUsers[uIdx] = {
-          ...existing,
-          ...cleanAg,
-          password: cleanAg.password || existing.password || '12345678',
-          mobile: cleanAg.mobile || existing.mobile || cleanAg.agentContact,
-          role: isAgentRole(cleanAg.role) ? cleanAg.role : existing.role,
-        };
-        usersModified = true;
+        const merged = mergeTwoUserRecords(serverUsers[uIdx], cleanAg, false);
+        if (JSON.stringify(merged) !== JSON.stringify(serverUsers[uIdx])) {
+          serverUsers[uIdx] = merged;
+          usersModified = true;
+        }
       }
     }
 
     for (const u of serverUsers) {
-      if (!u || !u.id || isFakeAgent(u)) continue;
       if (isAgentRole(u.role)) {
         const aIdx = cashAgents.findIndex((a) => a.id === u.id);
         if (aIdx === -1) {
@@ -201,6 +405,12 @@ async function startServer() {
           };
           agentsModified = true;
         }
+      } else {
+        const aIdx = cashAgents.findIndex((a) => a.id === u.id);
+        if (aIdx !== -1 && (u.updatedAt || 0) > (cashAgents[aIdx].updatedAt || 0)) {
+          cashAgents.splice(aIdx, 1);
+          agentsModified = true;
+        }
       }
     }
 
@@ -208,7 +418,58 @@ async function startServer() {
     if (agentsModified) saveCashAgents(cashAgents);
   };
 
+  let lastFirestoreSyncMs = 0;
+  const syncWithCloudFirestore = async (force = false) => {
+    if (!fbConfig) return;
+    if (!force && Date.now() - lastFirestoreSyncMs < 2500) return;
+    lastFirestoreSyncMs = Date.now();
+    try {
+      const { users: cloudUsers, deletedIds: cloudDeleted } = await fetchCloudUsersAndDeleted();
+      let delChanged = false;
+      for (const did of cloudDeleted) {
+        if (!deletedUserIds.has(did)) {
+          deletedUserIds.add(did);
+          delChanged = true;
+        }
+      }
+      if (delChanged) saveDeletedUserIds(deletedUserIds);
+
+      let localChanged = false;
+      const cloudMap = new Map<string, any>();
+      for (const cu of cloudUsers) {
+        if (deletedUserIds.has(cu.id)) continue;
+        cloudMap.set(cu.id, cu);
+        const idx = serverUsers.findIndex((u) => u.id === cu.id);
+        if (idx === -1) {
+          serverUsers.push(cu);
+          localChanged = true;
+        } else {
+          const merged = mergeTwoUserRecords(serverUsers[idx], cu, false);
+          if (JSON.stringify(merged) !== JSON.stringify(serverUsers[idx])) {
+            serverUsers[idx] = merged;
+            localChanged = true;
+          }
+        }
+      }
+
+      if (localChanged || delChanged) {
+        syncAgentsAndUsersLists();
+        saveServerUsers(serverUsers);
+      }
+
+      // Push any serverUsers that are missing or newer than Cloud Firestore
+      for (const su of serverUsers) {
+        if (deletedUserIds.has(su.id)) continue;
+        const cu = cloudMap.get(su.id);
+        if (!cu || (su.updatedAt || 0) > (cu.updatedAt || 0)) {
+          pushUserToFirestore(su).catch(() => {});
+        }
+      }
+    } catch {}
+  };
+
   syncAgentsAndUsersLists();
+  syncWithCloudFirestore(true).catch(() => {});
 
   const recomputeServerReferralCounts = () => {
     let changed = false;
@@ -228,73 +489,46 @@ async function startServer() {
     }
   };
 
-  app.get('/api/users', (_req, res) => {
+  app.get('/api/users', async (_req, res) => {
+    await syncWithCloudFirestore();
     syncAgentsAndUsersLists();
     recomputeServerReferralCounts();
-    res.json({ ok: true, users: serverUsers });
+    res.json({
+      ok: true,
+      users: serverUsers,
+      deletedUserIds: Array.from(deletedUserIds),
+    });
   });
 
-  app.post('/api/users', (req, res) => {
+  app.post('/api/users', async (req, res) => {
+    await syncWithCloudFirestore();
     const incomingUser = req.body?.user;
     const incomingUsers = req.body?.users;
 
     const upsertOne = (u: any, isExplicitSingleSave: boolean) => {
-      if (!u || !u.id || isFakeAgent(u)) return;
+      if (!u || !u.id || isFakeAgent(u) || deletedUserIds.has(u.id)) return;
       const idx = serverUsers.findIndex((existing) => existing.id === u.id);
       if (idx >= 0) {
-        const prev = serverUsers[idx];
-        const prevUpdatedAt = prev.updatedAt || 0;
-        const incUpdatedAt = u.updatedAt || 0;
-
-        // Protect Agent roles & newer updates from being overwritten by stale bulk sync from another tab/device
-        const resolvedRole = isExplicitSingleSave
-          ? u.role || prev.role
-          : isAgentRole(prev.role) && !isAgentRole(u.role) && incUpdatedAt <= prevUpdatedAt
-          ? prev.role
-          : incUpdatedAt >= prevUpdatedAt
-          ? u.role || prev.role
-          : prev.role;
-
-        const resolvedPassword = isExplicitSingleSave
-          ? u.password || prev.password
-          : incUpdatedAt >= prevUpdatedAt
-          ? u.password || prev.password
-          : prev.password || u.password;
-
-        const resolvedMobile = isExplicitSingleSave
-          ? u.mobile || prev.mobile
-          : incUpdatedAt >= prevUpdatedAt
-          ? u.mobile || prev.mobile
-          : prev.mobile || u.mobile;
-
-        serverUsers[idx] = {
-          ...prev,
-          ...(isExplicitSingleSave || incUpdatedAt >= prevUpdatedAt ? u : {}),
-          role: resolvedRole,
-          password: resolvedPassword,
-          mobile: resolvedMobile,
-          agentContact: u.agentContact || prev.agentContact || resolvedMobile,
-          referralCount: Math.max(prev.referralCount || 0, u.referralCount || 0),
-          referralEarnings: Math.max(prev.referralEarnings || 0, u.referralEarnings || 0),
-          totalWagered: Math.max(prev.totalWagered || 0, u.totalWagered || 0),
-          totalDeposited: Math.max(prev.totalDeposited || 0, u.totalDeposited || 0),
-          commissionGeneratedForReferrer: Math.max(
-            prev.commissionGeneratedForReferrer || 0,
-            u.commissionGeneratedForReferrer || 0
-          ),
-          updatedAt: isExplicitSingleSave
-            ? Date.now()
-            : Math.max(prevUpdatedAt, incUpdatedAt, Date.now()),
-        };
+        const merged = mergeTwoUserRecords(serverUsers[idx], u, isExplicitSingleSave);
+        const changed = JSON.stringify(merged) !== JSON.stringify(serverUsers[idx]);
+        serverUsers[idx] = merged;
+        if (isExplicitSingleSave || changed) {
+          pushUserToFirestore(merged).catch(() => {});
+        }
       } else {
-        serverUsers.push({
+        const created = {
           ...u,
-          updatedAt: u.updatedAt || Date.now(),
-        });
+          updatedAt: isExplicitSingleSave ? Date.now() : u.updatedAt ?? 0,
+        };
+        serverUsers.push(created);
+        pushUserToFirestore(created).catch(() => {});
       }
     };
 
-    if (incomingUser) upsertOne(incomingUser, true);
+    if (incomingUser) {
+      deletedUserIds.delete(incomingUser.id);
+      upsertOne(incomingUser, true);
+    }
     if (Array.isArray(incomingUsers)) {
       for (const u of incomingUsers) upsertOne(u, false);
     }
@@ -302,11 +536,16 @@ async function startServer() {
     syncAgentsAndUsersLists();
     recomputeServerReferralCounts();
     saveServerUsers(serverUsers);
-    res.json({ ok: true, users: serverUsers });
+    res.json({
+      ok: true,
+      users: serverUsers,
+      deletedUserIds: Array.from(deletedUserIds),
+    });
   });
 
-  // Dedicated Cross-Device Login Endpoint (searches both serverUsers and cashAgents)
-  app.post('/api/auth/login', (req, res) => {
+  // Dedicated Cross-Device Login Endpoint (searches Cloud Firestore, serverUsers, and cashAgents)
+  app.post('/api/auth/login', async (req, res) => {
+    await syncWithCloudFirestore(true);
     syncAgentsAndUsersLists();
     const rawIdentifier = String(req.body?.identifier || '').trim();
     const rawPassword = String(req.body?.password || '');
@@ -346,6 +585,7 @@ async function startServer() {
         };
         serverUsers.push(adminUser);
         saveServerUsers(serverUsers);
+        pushUserToFirestore(adminUser).catch(() => {});
       }
       return res.json({ ok: true, user: adminUser });
     }
@@ -353,15 +593,18 @@ async function startServer() {
     // Combined pool prioritizing agents & registered accounts
     const allCandidates = [...cashAgents, ...serverUsers];
     const matchUser = (u: any): boolean => {
-      if (!u || !u.id || isFakeAgent(u)) return false;
+      if (!u || !u.id || isFakeAgent(u) || deletedUserIds.has(u.id)) return false;
       const uPhone = normalizeSriLankaPhone(u.mobile);
       const uContact = normalizeSriLankaPhone(u.agentContact);
+      const uNamePhone = normalizeSriLankaPhone(u.username);
       const uNameLower = String(u.username || '').trim().toLowerCase();
       const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
       const uEmailLower = String(u.email || '').trim().toLowerCase();
       const uIdLower = String(u.id || '').trim().toLowerCase();
 
-      if (normPhone && (uPhone === normPhone || uContact === normPhone)) return true;
+      if (normPhone && (uPhone === normPhone || uContact === normPhone || uNamePhone === normPhone)) {
+        return true;
+      }
       if (u.mobile && String(u.mobile).trim().toLowerCase() === idLower) return true;
       if (u.agentContact && String(u.agentContact).trim().toLowerCase() === idLower) return true;
       if (uNameLower && (uNameLower === idLower || uNameCompact === idCompact)) return true;
@@ -395,6 +638,40 @@ async function startServer() {
 
     const { isOnline, lastSeen, ...cleanUser } = found;
     return res.json({ ok: true, user: cleanUser });
+  });
+
+  // Cross-Device Transactions Sync
+  app.get('/api/transactions', (_req, res) => {
+    res.json({ ok: true, transactions: serverTransactions });
+  });
+
+  app.post('/api/transactions', (req, res) => {
+    const incomingTx = req.body?.transaction;
+    const incomingList = req.body?.transactions;
+
+    const map = new Map<string, any>();
+    for (const tx of serverTransactions) {
+      if (tx && tx.id) map.set(tx.id, tx);
+    }
+
+    if (incomingTx && incomingTx.id) {
+      map.set(incomingTx.id, incomingTx);
+    }
+    if (Array.isArray(incomingList)) {
+      for (const tx of incomingList) {
+        if (!tx || !tx.id) continue;
+        const existing = map.get(tx.id);
+        if (!existing || existing.status === 'pending') {
+          map.set(tx.id, tx);
+        }
+      }
+    }
+
+    serverTransactions = Array.from(map.values())
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .slice(0, 250);
+    saveServerTransactions(serverTransactions);
+    res.json({ ok: true, transactions: serverTransactions });
   });
 
   // Global Admin Settings Sync (Mines Risk Level, Lose Rate, Crash Config)
@@ -431,9 +708,10 @@ async function startServer() {
     return { isOnline: true, lastSeen: agent.createdAt };
   };
 
-  app.get('/api/agents', (_req, res) => {
+  app.get('/api/agents', async (_req, res) => {
+    await syncWithCloudFirestore();
     syncAgentsAndUsersLists();
-    cashAgents = cashAgents.filter((a) => !isFakeAgent(a));
+    cashAgents = cashAgents.filter((a) => !isFakeAgent(a) && !deletedUserIds.has(a.id));
     const agentsWithPresence = cashAgents.map((agent) => {
       const { isOnline, lastSeen } = isUserOnlineNow(agent);
       return { ...agent, isOnline, lastSeen };
@@ -441,7 +719,7 @@ async function startServer() {
     res.json({ ok: true, agents: agentsWithPresence });
   });
 
-  app.post('/api/agents', (req, res) => {
+  app.post('/api/agents', async (req, res) => {
     const agent = req.body?.agent;
     if (!agent || !agent.id || !agent.username) {
       return res.status(400).json({ error: 'Invalid agent payload' });
@@ -450,6 +728,9 @@ async function startServer() {
       return res.json({ ok: true, ignored: true });
     }
 
+    deletedUserIds.delete(agent.id);
+    saveDeletedUserIds(deletedUserIds);
+
     const agentWithTimestamp = {
       ...agent,
       mobile: agent.mobile || agent.agentContact || '',
@@ -457,7 +738,7 @@ async function startServer() {
       updatedAt: Date.now(),
     };
 
-    // Always upsert into serverUsers too so cross-device login always has the agent
+    // Always upsert into serverUsers & Cloud Firestore too so cross-device login always has the agent
     const uIdx = serverUsers.findIndex((u) => u.id === agentWithTimestamp.id);
     if (uIdx >= 0) {
       serverUsers[uIdx] = { ...serverUsers[uIdx], ...agentWithTimestamp };
@@ -465,6 +746,7 @@ async function startServer() {
       serverUsers.push(agentWithTimestamp);
     }
     saveServerUsers(serverUsers);
+    await pushUserToFirestore(agentWithTimestamp);
 
     if (!isAgentRole(agentWithTimestamp.role)) {
       cashAgents = cashAgents.filter((a) => a.id !== agentWithTimestamp.id);
@@ -491,6 +773,7 @@ async function startServer() {
     if (idx >= 0) {
       cashAgents[idx].adminOnlineStatus = Boolean(isOnline);
       saveCashAgents(cashAgents);
+      pushUserToFirestore(cashAgents[idx]).catch(() => {});
     }
     if (isOnline) {
       activePresence.set(agentId, { lastSeen: Date.now(), manualOffline: false });
@@ -500,20 +783,23 @@ async function startServer() {
     return res.json({ ok: true });
   });
 
-  app.delete('/api/agents/:id', (req, res) => {
+  app.delete('/api/agents/:id', async (req, res) => {
     const targetId = req.params.id;
+    deletedUserIds.add(targetId);
+    saveDeletedUserIds(deletedUserIds);
     cashAgents = cashAgents.filter((a) => a.id !== targetId);
     serverUsers = serverUsers.filter((u) => u.id !== targetId);
     activePresence.delete(targetId);
     saveCashAgents(cashAgents);
     saveServerUsers(serverUsers);
+    await deleteUserFromFirestore(targetId, deletedUserIds);
     return res.json({ ok: true });
   });
 
   app.post('/api/presence/heartbeat', (req, res) => {
     const { user, manualOffline } = req.body || {};
-    if (!user || !user.id) {
-      return res.status(400).json({ error: 'Missing user id' });
+    if (!user || !user.id || isFakeAgent(user) || deletedUserIds.has(user.id)) {
+      return res.status(400).json({ error: 'Missing or invalid user id' });
     }
     const existingPresence = activePresence.get(user.id);
     const effectiveManualOffline =
@@ -523,23 +809,23 @@ async function startServer() {
       manualOffline: effectiveManualOffline,
     });
 
-    if (!isFakeAgent(user)) {
-      const uIdx = serverUsers.findIndex((u) => u.id === user.id);
-      if (uIdx === -1) {
-        serverUsers.push({ ...user, updatedAt: Date.now() });
-        saveServerUsers(serverUsers);
-      } else if (isAgentRole(user.role)) {
-        serverUsers[uIdx] = {
-          ...serverUsers[uIdx],
-          ...user,
-          password: user.password || serverUsers[uIdx].password || '12345678',
-          mobile: user.mobile || serverUsers[uIdx].mobile || user.agentContact,
-        };
-        saveServerUsers(serverUsers);
-      }
+    const uIdx = serverUsers.findIndex((u) => u.id === user.id);
+    if (uIdx === -1) {
+      const created = { ...user, updatedAt: user.updatedAt || Date.now() };
+      serverUsers.push(created);
+      saveServerUsers(serverUsers);
+      pushUserToFirestore(created).catch(() => {});
+    } else if (isAgentRole(user.role)) {
+      serverUsers[uIdx] = {
+        ...serverUsers[uIdx],
+        ...user,
+        password: user.password || serverUsers[uIdx].password || '12345678',
+        mobile: user.mobile || serverUsers[uIdx].mobile || user.agentContact,
+      };
+      saveServerUsers(serverUsers);
     }
 
-    if (!isFakeAgent(user) && isAgentRole(user.role)) {
+    if (isAgentRole(user.role)) {
       const idx = cashAgents.findIndex((a) => a.id === user.id);
       if (idx >= 0) {
         const currentAdminStatus = cashAgents[idx].adminOnlineStatus;

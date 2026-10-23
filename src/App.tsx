@@ -1770,6 +1770,31 @@ export default function App() {
     );
   }
 
+  // Dedicated Cash Agent Portal: Cash Agents do not go to the main betting site
+  const isCashAgentRole =
+    currentUser.role === 'cash_agent' ||
+    currentUser.role === 'deposit_agent' ||
+    currentUser.role === 'withdraw_agent';
+
+  if (isCashAgentRole) {
+    return (
+      <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden flex flex-col font-sans bg-slate-950 text-slate-100">
+        {isSiteBooting && <LionBetSiteLoader onFinished={() => setIsSiteBooting(false)} />}
+        <CashAgentPanelModal
+          isOpen={true}
+          initialMode={currentUser.role === 'withdraw_agent' ? 'withdraw_page' : 'deposit_panel'}
+          onClose={() => {}}
+          currentUser={currentUser}
+          onUserUpdated={(u) => {
+            currentUserRef.current = u;
+            setCurrentUserState(u);
+          }}
+          onLogout={handleLogout}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={`min-h-screen w-full max-w-[100vw] overflow-x-hidden flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-colors duration-200 ${

@@ -146,14 +146,17 @@ async function startServer() {
     agent: ServerCashAgent & { adminOnlineStatus?: boolean }
   ): { isOnline: boolean; lastSeen: number | null } => {
     const entry = activePresence.get(agent.id);
+    if (typeof agent.adminOnlineStatus === 'boolean') {
+      return {
+        isOnline: agent.adminOnlineStatus,
+        lastSeen: entry?.lastSeen || agent.createdAt,
+      };
+    }
     if (entry) {
       if (entry.manualOffline) return { isOnline: false, lastSeen: entry.lastSeen };
       if (Date.now() - entry.lastSeen <= PRESENCE_TIMEOUT_MS) {
         return { isOnline: true, lastSeen: entry.lastSeen };
       }
-    }
-    if (typeof agent.adminOnlineStatus === 'boolean') {
-      return { isOnline: agent.adminOnlineStatus, lastSeen: entry?.lastSeen || agent.createdAt };
     }
     return { isOnline: true, lastSeen: agent.createdAt };
   };
@@ -238,9 +241,15 @@ async function startServer() {
       return res.status(400).json({ error: 'Missing user id' });
     }
 
+    const existingPresence = activePresence.get(user.id);
+    const effectiveManualOffline =
+      typeof manualOffline === 'boolean'
+        ? manualOffline
+        : Boolean(existingPresence?.manualOffline);
+
     activePresence.set(user.id, {
       lastSeen: Date.now(),
-      manualOffline: Boolean(manualOffline),
+      manualOffline: effectiveManualOffline,
     });
 
     // If this logged-in user is a valid Admin-created Cash Agent, ensure they exist in cashAgents list
@@ -252,9 +261,23 @@ async function startServer() {
     ) {
       const idx = cashAgents.findIndex((a) => a.id === user.id);
       if (idx >= 0) {
-        cashAgents[idx] = { ...cashAgents[idx], ...user, adminOnlineStatus: !manualOffline } as any;
+        const currentAdminStatus = (cashAgents[idx] as any).adminOnlineStatus;
+        const nextStatus =
+          typeof manualOffline === 'boolean'
+            ? !manualOffline
+            : typeof currentAdminStatus === 'boolean'
+            ? currentAdminStatus
+            : true;
+        cashAgents[idx] = {
+          ...cashAgents[idx],
+          ...user,
+          adminOnlineStatus: nextStatus,
+        } as any;
       } else {
-        cashAgents.push({ ...user, adminOnlineStatus: !manualOffline } as any);
+        cashAgents.push({
+          ...user,
+          adminOnlineStatus: typeof manualOffline === 'boolean' ? !manualOffline : true,
+        } as any);
       }
       saveCashAgents(cashAgents);
     }
@@ -262,15 +285,13 @@ async function startServer() {
     return res.json({ ok: true, timestamp: Date.now() });
   });
 
-  // POST /api/presence/logout - Immediately mark user/agent as offline when they log out
+  // POST /api/presence/logout - Record user logout without overwriting a Cash Agent's chosen Online/Offline visibility
   app.post('/api/presence/logout', (req, res) => {
     const { userId } = req.body || {};
     if (userId) {
-      activePresence.set(userId, { lastSeen: Date.now(), manualOffline: true });
       const idx = cashAgents.findIndex((a) => a.id === userId);
-      if (idx >= 0) {
-        (cashAgents[idx] as any).adminOnlineStatus = false;
-        saveCashAgents(cashAgents);
+      if (idx === -1) {
+        activePresence.set(userId, { lastSeen: Date.now(), manualOffline: true });
       }
     }
     return res.json({ ok: true });

@@ -583,13 +583,17 @@ function getLocalPresenceMap(): Record<string, { lastSeen: number; manualOffline
   return {};
 }
 
-export function recordUserPresenceHeartbeat(user: User, manualOffline = false) {
+export function recordUserPresenceHeartbeat(user: User, manualOffline?: boolean) {
   if (!user || !user.id || isRemovedFakeAgent(user)) return;
+  const map = getLocalPresenceMap();
+  const effectiveManualOffline =
+    typeof manualOffline === 'boolean'
+      ? manualOffline
+      : Boolean(map[user.id]?.manualOffline);
   try {
-    const map = getLocalPresenceMap();
     map[user.id] = {
       lastSeen: Date.now(),
-      manualOffline,
+      manualOffline: effectiveManualOffline,
     };
     localStorage.setItem(LOCAL_PRESENCE_KEY, JSON.stringify(map));
   } catch {}
@@ -597,7 +601,7 @@ export function recordUserPresenceHeartbeat(user: User, manualOffline = false) {
   fetch('/api/presence/heartbeat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user, manualOffline }),
+    body: JSON.stringify({ user, manualOffline: effectiveManualOffline }),
   }).catch(() => {});
 }
 
@@ -610,6 +614,7 @@ export function setAgentOnlineStatus(agentId: string, isOnline: boolean) {
       manualOffline: !isOnline,
     };
     localStorage.setItem(LOCAL_PRESENCE_KEY, JSON.stringify(map));
+    window.dispatchEvent(new Event('storage'));
   } catch {}
 
   fetch('/api/agents/status', {
@@ -622,12 +627,21 @@ export function setAgentOnlineStatus(agentId: string, isOnline: boolean) {
 export function clearUserPresenceOnLogout(userId: string) {
   if (!userId) return;
   try {
-    const map = getLocalPresenceMap();
-    map[userId] = {
-      lastSeen: Date.now(),
-      manualOffline: true,
-    };
-    localStorage.setItem(LOCAL_PRESENCE_KEY, JSON.stringify(map));
+    const users = getUsers();
+    const target = users.find((u) => u.id === userId);
+    const isAgent =
+      target &&
+      (target.role === 'deposit_agent' ||
+        target.role === 'withdraw_agent' ||
+        target.role === 'cash_agent');
+    if (!isAgent) {
+      const map = getLocalPresenceMap();
+      map[userId] = {
+        lastSeen: Date.now(),
+        manualOffline: true,
+      };
+      localStorage.setItem(LOCAL_PRESENCE_KEY, JSON.stringify(map));
+    }
   } catch {}
 
   fetch('/api/presence/logout', {
@@ -638,12 +652,13 @@ export function clearUserPresenceOnLogout(userId: string) {
 }
 
 export function isAgentOnlineLocally(agentId: string): boolean {
-  const current = getCurrentUser();
   const map = getLocalPresenceMap();
   const entry = map[agentId];
-  if (entry?.manualOffline === true) return false;
+  if (entry && typeof entry.manualOffline === 'boolean') {
+    return !entry.manualOffline;
+  }
+  const current = getCurrentUser();
   if (current && current.id === agentId) return true;
-  if (entry && entry.manualOffline === false) return true;
   // Admin-created agents default to online unless marked offline
   return true;
 }

@@ -7,6 +7,10 @@ import {
   saveTransactions,
   addTransaction,
   getBetHistory,
+  isAgentOnlineLocally,
+  setAgentOnlineStatus,
+  recordUserPresenceHeartbeat,
+  fetchCashAgentsWithPresence,
 } from '../services/storage';
 import {
   ArrowDownCircle,
@@ -71,12 +75,24 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [previewReceiptTx, setPreviewReceiptTx] = useState<Transaction | null>(null);
+  const [isOnlineToUsers, setIsOnlineToUsers] = useState<boolean>(() =>
+    isAgentOnlineLocally(currentUser.id)
+  );
 
   useEffect(() => {
     if (isOpen) {
       setUsersList(getUsers());
       setTransactionsList(getTransactions());
       setBetHistoryList(getBetHistory());
+      setIsOnlineToUsers(isAgentOnlineLocally(currentUser.id));
+      fetchCashAgentsWithPresence()
+        .then((agents) => {
+          const me = agents.find((a) => a.id === currentUser.id);
+          if (me) {
+            setIsOnlineToUsers(Boolean(me.isOnline));
+          }
+        })
+        .catch(() => {});
       if (currentUser.role === 'withdraw_agent') {
         setAgentPage('withdraw_page');
       } else if (currentUser.role === 'deposit_agent') {
@@ -85,7 +101,7 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
         setAgentPage(initialMode);
       }
     }
-  }, [isOpen, initialMode, currentUser.role]);
+  }, [isOpen, initialMode, currentUser.role, currentUser.id]);
 
   if (!isOpen) return null;
 
@@ -93,6 +109,18 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
     setToastMsg(msg);
     setErrorMsg(null);
     setTimeout(() => setToastMsg(null), 4000);
+  };
+
+  const handleToggleOnlineStatus = (nextOnline: boolean) => {
+    setIsOnlineToUsers(nextOnline);
+    setAgentOnlineStatus(currentUser.id, nextOnline);
+    recordUserPresenceHeartbeat(currentUser, !nextOnline);
+    fetchCashAgentsWithPresence().catch(() => {});
+    showToast(
+      nextOnline
+        ? 'You are now ONLINE! Other users will see you as ONLINE in Deposit & Withdraw.'
+        : 'You are now OFFLINE! Other users will see you as OFFLINE in Deposit & Withdraw.'
+    );
   };
 
   const refreshData = () => {
@@ -354,9 +382,19 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
                 <span className="px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                   {currentUser.username} ({currentUser.role.replace('_', ' ').toUpperCase()})
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase bg-green-500/20 text-green-300 border border-green-500/40">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  ONLINE ON SITE
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase border ${
+                    isOnlineToUsers
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isOnlineToUsers ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                    }`}
+                  />
+                  {isOnlineToUsers ? 'SHOWN ONLINE TO USERS' : 'SHOWN OFFLINE TO USERS'}
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs text-slate-400 hidden sm:block">
@@ -367,8 +405,46 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
             </div>
           </div>
 
-          {/* Dedicated Page Switcher: Deposit Agent Panel vs Withdraw Agent Page */}
+          {/* Dedicated Page Switcher + Online/Offline Visibility Switch + Logout (No Close Button) */}
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto justify-between sm:justify-end">
+            {/* Agent Online / Offline Status Switcher for Other Users */}
+            <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleToggleOnlineStatus(true)}
+                className={`px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                  isOnlineToUsers
+                    ? 'bg-emerald-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Show yourself as ONLINE to all players in Deposit/Withdraw"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isOnlineToUsers ? 'bg-slate-950 animate-pulse' : 'bg-emerald-400'
+                  }`}
+                />
+                <span>Online</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleOnlineStatus(false)}
+                className={`px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                  !isOnlineToUsers
+                    ? 'bg-rose-500 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Show yourself as OFFLINE to all players in Deposit/Withdraw"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    !isOnlineToUsers ? 'bg-white' : 'bg-slate-500'
+                  }`}
+                />
+                <span>Offline</span>
+              </button>
+            </div>
+
             <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 flex-1 sm:flex-initial">
               <button
                 type="button"
@@ -407,22 +483,13 @@ export const CashAgentPanelModal: React.FC<CashAgentPanelModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onClose();
                   onLogout();
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 text-[11px] sm:text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 text-[11px] sm:text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                 title="Logout from Agent Account"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
+                <span>Logout</span>
               </button>
             </div>
           </div>

@@ -786,20 +786,18 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={method === 'bank_transfer' && !slipFile}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
-              >
-                <ArrowDownCircle className="w-4 h-4" />
-                {method === 'bank_transfer'
-                  ? !slipFile
+              {method === 'bank_transfer' && (
+                <button
+                  type="submit"
+                  disabled={!slipFile}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ArrowDownCircle className="w-4 h-4" />
+                  {!slipFile
                     ? 'UPLOAD RECEIPT TO SUBMIT DEPOSIT'
-                    : 'SUBMIT RECEIPT FOR ADMIN APPROVAL'
-                  : isFirstDepositEligible
-                  ? `DEPOSIT Rs. ${amount.toLocaleString()} + GET Rs. ${amount.toLocaleString()} FREE BONUS`
-                  : `CONFIRM DEPOSIT (Rs. ${amount.toLocaleString()} LKR)`}
-              </button>
+                    : 'SUBMIT RECEIPT FOR ADMIN APPROVAL'}
+                </button>
+              )}
             </form>
           )}
 
@@ -875,7 +873,7 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  required
+                  required={method === 'bank_transfer'}
                   placeholder={
                     method === 'bank_transfer'
                       ? 'e.g. 8009234120'
@@ -893,7 +891,7 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  required
+                  required={method === 'bank_transfer'}
                   placeholder="e.g. K. M. Kasun Perera"
                   value={accountName}
                   onChange={(e) => setAccountName(e.target.value)}
@@ -953,14 +951,16 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={amount <= 0 || amount > withdrawableBalance}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 disabled:opacity-40 cursor-pointer flex items-center justify-center gap-2"
-              >
-                <ArrowUpCircle className="w-4 h-4" />
-                REQUEST WITHDRAWAL (Rs. {amount.toLocaleString()} LKR)
-              </button>
+              {method === 'bank_transfer' && (
+                <button
+                  type="submit"
+                  disabled={amount <= 0 || amount > withdrawableBalance}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black text-sm tracking-wide transition shadow-lg shadow-emerald-500/20 active:scale-98 disabled:opacity-40 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ArrowUpCircle className="w-4 h-4" />
+                  REQUEST WITHDRAWAL (Rs. {amount.toLocaleString()} LKR)
+                </button>
+              )}
             </form>
           )}
 

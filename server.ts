@@ -758,6 +758,41 @@ async function startServer() {
     res.json({ ok: true, settings: serverAdminSettings });
   });
 
+  // Persistent Balloon Crash Lobby Image Upload & Retrieval (syncs across all devices)
+  app.get('/api/lobby-image/balloon-crash', (_req, res) => {
+    const customImage = serverAdminSettings?.balloonCrashLobbyImage || null;
+    res.json({ ok: true, imageUrl: customImage });
+  });
+
+  app.post('/api/lobby-image/balloon-crash', (req, res) => {
+    try {
+      const dataUrl = String(req.body?.imageDataUrl || '').trim();
+      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+        return res.status(400).json({ ok: false, error: 'Invalid image data' });
+      }
+      const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+      let savedUrl = dataUrl;
+      if (match) {
+        const ext = match[1] === 'jpeg' ? 'jpg' : match[1] === 'svg+xml' ? 'svg' : match[1];
+        const base64Data = match[2];
+        const fileName = `balloon_crash_custom.${ext}`;
+        const publicDir = path.join(__dirname, 'public', 'assets', 'aistudio');
+        fs.mkdirSync(publicDir, { recursive: true });
+        fs.writeFileSync(path.join(publicDir, fileName), Buffer.from(base64Data, 'base64'));
+        savedUrl = `/assets/aistudio/${fileName}?v=${Date.now()}`;
+      }
+      serverAdminSettings = {
+        ...(serverAdminSettings || {}),
+        balloonCrashLobbyImage: dataUrl,
+        balloonCrashLobbyImageFileUrl: savedUrl,
+      };
+      saveServerAdminSettings(serverAdminSettings);
+      return res.json({ ok: true, imageUrl: dataUrl, fileUrl: savedUrl });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to save image' });
+    }
+  });
+
   const isUserOnlineNow = (agent: any) => {
     const entry = activePresence.get(agent.id);
     if (typeof agent.adminOnlineStatus === 'boolean') {

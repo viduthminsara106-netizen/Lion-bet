@@ -132,6 +132,49 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   const [roomOnlineBase, setRoomOnlineBase] = useState<number>(
     () => getTimeBasedCrashCrowd().onlineInGame
   );
+  const [customBalloonImage, setCustomBalloonImage] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('balloon_crash_custom_lobby_image');
+    } catch {
+      return null;
+    }
+  });
+
+  // Sync custom Balloon Crash lobby image from server
+  useEffect(() => {
+    fetch('/api/lobby-image/balloon-crash')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.ok && data.imageUrl) {
+          setCustomBalloonImage(data.imageUrl);
+          try {
+            localStorage.setItem('balloon_crash_custom_lobby_image', data.imageUrl);
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleUploadBalloonLobbyImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = String(reader.result || '');
+      if (dataUrl.startsWith('data:image/')) {
+        setCustomBalloonImage(dataUrl);
+        try {
+          localStorage.setItem('balloon_crash_custom_lobby_image', dataUrl);
+        } catch {}
+        fetch('/api/lobby-image/balloon-crash', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageDataUrl: dataUrl }),
+        }).catch(() => {});
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Keep online count steady within each time-of-day period
   useEffect(() => {
@@ -202,7 +245,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       : COMING_SOON_GAMES.filter((g) => g.category === selectedCategory);
 
   const BALLOON_CRASH_BG_IMAGE = BALLOON_CRASH_BG_URL;
-  const BALLOON_CRASH_LOGO = BALLOON_CRASH_LOGO_URL;
+  const BALLOON_CRASH_LOGO = customBalloonImage || BALLOON_CRASH_LOGO_URL;
 
   const renderSportsBettingCard = () => (
     <div
@@ -268,38 +311,38 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   const renderBalloonCrashCard = () => (
     <div
       onClick={handleLaunchBalloonCrash}
-      className="group relative rounded-xl overflow-hidden border border-amber-500/60 hover:border-amber-400 bg-slate-900 shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+      className="group relative rounded-xl overflow-hidden border-2 border-amber-500/80 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 cursor-pointer flex flex-col justify-between"
     >
-      {/* Classic Balloon Crash Cover */}
-      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-slate-950 flex items-center justify-center">
+      {/* Classic Balloon Crash Lobby Cover Image */}
+      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#05030a] flex items-center justify-center">
         <img
           src={BALLOON_CRASH_LOGO}
-          alt="Balloon Crash"
+          alt="Balloon Crash Lobby Cover"
           className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-300"
         />
 
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-slate-950/35 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-slate-950/25 pointer-events-none" />
 
         {/* Classic Top Status Badges */}
         <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 z-10">
           <div className="flex flex-col items-start gap-1">
             <span className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-white" />
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
               LIVE
             </span>
-            <span className="px-2 py-0.5 rounded bg-slate-950/95 border border-emerald-500/60 text-emerald-400 text-[9px] font-bold font-mono tabular-nums flex items-center gap-1">
+            <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-emerald-500/60 text-emerald-400 text-[9px] font-bold font-mono tabular-nums flex items-center gap-1">
               <Users className="w-2.5 h-2.5 text-emerald-400" />
               <span>{totalOnlineInGame} Online</span>
             </span>
           </div>
-          <span className="px-1.5 py-0.5 rounded bg-slate-950/90 border border-amber-500/50 text-amber-400 text-[8px] font-bold uppercase">
+          <span className="px-1.5 py-0.5 rounded bg-slate-950/90 border border-amber-500/60 text-amber-400 text-[8px] font-bold uppercase">
             CRASH
           </span>
         </div>
 
         {/* Classic Bottom Tag */}
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between z-10">
-          <span className="px-2 py-0.5 rounded bg-slate-950/85 border border-slate-700 text-amber-300 text-[9px] font-semibold">
+        <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-center z-10">
+          <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[8.5px] font-bold tracking-wider uppercase shadow">
             100x+ Multiplier Arena
           </span>
         </div>
@@ -307,13 +350,30 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
 
       {/* Classic Card Footer */}
       <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
-        <div>
-          <h3 className="text-xs sm:text-sm font-bold text-white truncate">
-            Balloon Crash
-          </h3>
-          <span className="text-[10px] text-amber-400 font-medium block">
-            Crash Game • LKR
-          </span>
+        <div className="flex items-center justify-between gap-1">
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-white truncate">
+              Balloon Crash
+            </h3>
+            <span className="text-[10px] text-amber-400 font-medium block">
+              Crash Game • LKR
+            </span>
+          </div>
+          {currentUser.role === 'admin' && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300 text-[9px] font-bold cursor-pointer shrink-0 transition"
+              title="Upload Custom Balloon Crash Lobby Image"
+            >
+              📷 Image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleUploadBalloonLobbyImage}
+                className="hidden"
+              />
+            </label>
+          )}
         </div>
 
         <button
@@ -322,7 +382,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
             e.stopPropagation();
             handleLaunchBalloonCrash();
           }}
-          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer"
+          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
         >
           <Play className="w-3.5 h-3.5 fill-slate-950" />
           <span>PLAY NOW</span>
@@ -579,7 +639,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px]" />
 
           <div className="relative z-10 bg-slate-900 border border-amber-500/60 rounded-2xl p-4 sm:p-5 w-full max-w-[330px] shadow-2xl flex flex-col items-center text-center overflow-hidden">
-            <div className="relative w-full aspect-square max-w-[200px] rounded-xl overflow-hidden border border-amber-500/60 shadow-lg mb-3 bg-slate-950 flex items-center justify-center">
+            <div className="relative w-full aspect-[3/4] max-w-[185px] rounded-xl overflow-hidden border border-amber-500/60 shadow-lg mb-3 bg-[#05030a] flex items-center justify-center">
               <img
                 src={BALLOON_CRASH_LOGO}
                 alt="Balloon Crash Logo"

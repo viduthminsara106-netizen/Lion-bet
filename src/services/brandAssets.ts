@@ -100,124 +100,361 @@ export const LION_BET_LOGO_SVG = `
 `;
 
 /**
- * Balloon Crash Game Card Cover Art (3:4 Aspect Ratio)
+ * Balloon Crash Game Card Cover Art (Exploding Red/Yellow/Blue Hot Air Balloon,
+ * Red-and-White Striped Parachute Skydiver, Glowing Golden Circle & 3D BALLOON CRASH Typography)
  */
 export const BALLOON_CRASH_COVER_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 480" width="360" height="480">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 520" width="400" height="520">
   <defs>
-    <linearGradient id="bcSky" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#090418"/>
-      <stop offset="45%" stop-color="#1e1b4b"/>
-      <stop offset="80%" stop-color="#31102f"/>
+    <!-- Deep Obsidian & Fiery Arena Background -->
+    <radialGradient id="bcCardBg" cx="50%" cy="44%" r="72%">
+      <stop offset="0%" stop-color="#2a0f1d"/>
+      <stop offset="45%" stop-color="#0f071e"/>
+      <stop offset="80%" stop-color="#06040d"/>
+      <stop offset="100%" stop-color="#020205"/>
+    </radialGradient>
+
+    <!-- Inner Circle Sky Gradient -->
+    <radialGradient id="bcCircleSky" cx="55%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#451a03"/>
+      <stop offset="35%" stop-color="#2e1065"/>
+      <stop offset="75%" stop-color="#0f172a"/>
       <stop offset="100%" stop-color="#020617"/>
-    </linearGradient>
-    <radialGradient id="bcSunGlow" cx="50%" cy="42%" r="52%">
-      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.55"/>
-      <stop offset="45%" stop-color="#ef4444" stop-opacity="0.25"/>
+    </radialGradient>
+
+    <!-- Ambient Fiery Explosion Glow -->
+    <radialGradient id="bcBlastGlow" cx="58%" cy="36%" r="48%">
+      <stop offset="0%" stop-color="#fef08a" stop-opacity="0.95"/>
+      <stop offset="28%" stop-color="#f97316" stop-opacity="0.75"/>
+      <stop offset="60%" stop-color="#dc2626" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="#020617" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="balloonMain" cx="38%" cy="32%" r="65%">
-      <stop offset="0%" stop-color="#fb7185"/>
-      <stop offset="35%" stop-color="#e11d48"/>
-      <stop offset="75%" stop-color="#9f1239"/>
-      <stop offset="100%" stop-color="#4c0519"/>
-    </radialGradient>
-    <linearGradient id="balloonGoldStripe" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fef08a"/>
+
+    <!-- 3D Metallic Gold Ring Gradient -->
+    <linearGradient id="bcGoldRing" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fffbeb"/>
+      <stop offset="20%" stop-color="#fde047"/>
+      <stop offset="45%" stop-color="#f59e0b"/>
+      <stop offset="70%" stop-color="#b45309"/>
+      <stop offset="88%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#78350f"/>
+    </linearGradient>
+
+    <linearGradient id="bcGoldBevel" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#78350f"/>
       <stop offset="50%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#b45309"/>
+      <stop offset="100%" stop-color="#fef08a"/>
     </linearGradient>
-    <linearGradient id="textGold" x1="0%" y1="0%" x2="0%" y2="100%">
+
+    <!-- Balloon Gore Gradients: Red, Yellow, Blue -->
+    <linearGradient id="goreRed" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="40%" stop-color="#ef4444"/>
+      <stop offset="80%" stop-color="#b91c1c"/>
+      <stop offset="100%" stop-color="#450a0a"/>
+    </linearGradient>
+
+    <linearGradient id="goreYellow" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="35%" stop-color="#fde047"/>
-      <stop offset="75%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#b45309"/>
+      <stop offset="25%" stop-color="#fef08a"/>
+      <stop offset="65%" stop-color="#eab308"/>
+      <stop offset="100%" stop-color="#854d0e"/>
     </linearGradient>
+
+    <linearGradient id="goreBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#93c5fd"/>
+      <stop offset="35%" stop-color="#3b82f6"/>
+      <stop offset="75%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#172554"/>
+    </linearGradient>
+
+    <!-- 3D Typography Gradients -->
+    <linearGradient id="titleGoldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="22%" stop-color="#fef08a"/>
+      <stop offset="55%" stop-color="#f59e0b"/>
+      <stop offset="85%" stop-color="#b45309"/>
+      <stop offset="100%" stop-color="#78350f"/>
+    </linearGradient>
+
+    <linearGradient id="titleCrashGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fff1f2"/>
+      <stop offset="25%" stop-color="#fda4af"/>
+      <stop offset="55%" stop-color="#ef4444"/>
+      <stop offset="85%" stop-color="#991b1b"/>
+      <stop offset="100%" stop-color="#450a0a"/>
+    </linearGradient>
+
+    <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#f59e0b" flood-opacity="0.55"/>
+    </filter>
+
+    <filter id="textShadow3D" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="2" flood-color="#000000" flood-opacity="0.9"/>
+    </filter>
+
+    <clipPath id="circleArenaClip">
+      <circle cx="200" cy="230" r="144"/>
+    </clipPath>
   </defs>
 
-  <!-- Night Sky & Fiery Glow -->
-  <rect width="360" height="480" fill="url(#bcSky)"/>
-  <circle cx="180" cy="195" r="175" fill="url(#bcSunGlow)"/>
+  <!-- Card Base Fill -->
+  <rect width="400" height="520" fill="url(#bcCardBg)"/>
 
-  <!-- Twinkling Stars -->
-  <g fill="#fef08a" opacity="0.8">
-    <circle cx="42" cy="58" r="2"/>
-    <circle cx="88" cy="34" r="1.5"/>
-    <circle cx="295" cy="48" r="2.2"/>
-    <circle cx="328" cy="96" r="1.5"/>
-    <circle cx="52" cy="148" r="1.8"/>
-    <circle cx="312" cy="175" r="2"/>
-    <circle cx="28" cy="235" r="1.5"/>
+  <!-- Background Sparkles & Embers -->
+  <g fill="#fde047" opacity="0.65">
+    <circle cx="42" cy="72" r="2"/>
+    <circle cx="76" cy="48" r="1.5"/>
+    <circle cx="336" cy="58" r="2.2"/>
+    <circle cx="362" cy="108" r="1.6"/>
+    <circle cx="34" cy="335" r="2"/>
+    <circle cx="364" cy="328" r="2.4"/>
+    <circle cx="58" cy="390" r="1.5"/>
+    <circle cx="344" cy="392" r="1.8"/>
   </g>
 
-  <!-- Rising Multiplier Trajectory Curve -->
-  <path d="M 24 355 Q 150 330 326 115" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="5" stroke-dasharray="8 6" opacity="0.75"/>
-  <circle cx="326" cy="115" r="6" fill="#fde047"/>
+  <!-- Outer Golden Aura -->
+  <circle cx="200" cy="230" r="168" fill="url(#bcBlastGlow)" opacity="0.55"/>
 
-  <!-- Parachuting Cashout Player (Left) -->
-  <g transform="translate(46, 175) rotate(-8)">
-    <path d="M0 22 C8 0, 38 0, 46 22 Z" fill="#10b981" stroke="#a7f3d0" stroke-width="2"/>
-    <line x1="6" y1="22" x2="20" y2="42" stroke="#cbd5e1" stroke-width="1.5"/>
-    <line x1="40" y1="22" x2="26" y2="42" stroke="#cbd5e1" stroke-width="1.5"/>
-    <circle cx="23" cy="45" r="5" fill="#fde047"/>
-    <rect x="7" y="54" width="34" height="14" rx="5" fill="#064e3b" stroke="#34d399" stroke-width="1"/>
-    <text x="24" y="64" text-anchor="middle" font-family="monospace" font-size="8.5" font-weight="900" fill="#6ee7b7">2.85x</text>
+  <!-- GLOWING GOLDEN CIRCULAR CASINO EMBLEM FRAME -->
+  <g filter="url(#goldGlow)">
+    <circle cx="200" cy="230" r="156" fill="url(#bcGoldRing)"/>
+    <circle cx="200" cy="230" r="150" fill="none" stroke="#451a03" stroke-width="2.5"/>
+    <circle cx="200" cy="230" r="146" fill="url(#bcGoldBevel)"/>
   </g>
 
-  <!-- Parachuting Cashout Player (Right) -->
-  <g transform="translate(268, 198) rotate(10)">
-    <path d="M0 20 C7 0, 33 0, 40 20 Z" fill="#f59e0b" stroke="#fef08a" stroke-width="2"/>
-    <line x1="5" y1="20" x2="17" y2="38" stroke="#cbd5e1" stroke-width="1.5"/>
-    <line x1="35" y1="20" x2="23" y2="38" stroke="#cbd5e1" stroke-width="1.5"/>
-    <circle cx="20" cy="41" r="4.5" fill="#fde047"/>
-    <rect x="4" y="49" width="34" height="14" rx="5" fill="#451a03" stroke="#fbbf24" stroke-width="1"/>
-    <text x="21" y="59" text-anchor="middle" font-family="monospace" font-size="8.5" font-weight="900" fill="#fde047">5.40x</text>
+  <!-- Inner Circular Arena -->
+  <g clip-path="url(#circleArenaClip)">
+    <circle cx="200" cy="230" r="144" fill="url(#bcCircleSky)"/>
+    <circle cx="225" cy="185" r="135" fill="url(#bcBlastGlow)"/>
+
+    <!-- Dramatic Sunburst Rays Behind Explosion -->
+    <g transform="translate(228, 172)" opacity="0.28" fill="#fef08a">
+      <polygon points="0,0 -180,-90 -150,-120"/>
+      <polygon points="0,0 -60,-180 -20,-180"/>
+      <polygon points="0,0 50,-180 90,-165"/>
+      <polygon points="0,0 165,-95 180,-55"/>
+      <polygon points="0,0 180,25 165,65"/>
+      <polygon points="0,0 -180,30 -170,-15"/>
+    </g>
+
+    <!-- Rising Crash Multiplier Curve -->
+    <path d="M 62 320 Q 152 295 235 162" fill="none" stroke="#fde047" stroke-width="4" stroke-dasharray="7 5" opacity="0.7"/>
+
+    <!-- Distant Secondary Parachute (Left) -->
+    <g transform="translate(72, 212) rotate(-12) scale(0.72)">
+      <path d="M 0 24 C 8 -4, 44 -4, 52 24 Z" fill="#ef4444" stroke="#fef2f2" stroke-width="1.5"/>
+      <path d="M 14 24 C 18 2, 34 2, 38 24 Z" fill="#ffffff"/>
+      <line x1="8" y1="24" x2="23" y2="46" stroke="#e2e8f0" stroke-width="1.5"/>
+      <line x1="44" y1="24" x2="29" y2="46" stroke="#e2e8f0" stroke-width="1.5"/>
+      <circle cx="26" cy="49" r="4.5" fill="#fde047"/>
+      <path d="M 22 54 L 30 54 L 28 66 L 24 66 Z" fill="#f8fafc"/>
+    </g>
+
+    <!-- HERO EXPLODING RED / YELLOW / BLUE HOT AIR BALLOON -->
+    <g transform="translate(166, 198) rotate(-6)">
+      <ellipse cx="0" cy="-12" rx="76" ry="86" fill="#ef4444" opacity="0.25"/>
+
+      <!-- Leftmost Blue Gore -->
+      <path d="M -72 -18 C -72 -68, -38 -98, 0 -98 C -30 -98, -56 -64, -56 -16 C -56 24, -36 56, -18 76 L -26 76 C -48 54, -72 22, -72 -18 Z" fill="url(#goreBlue)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Left Yellow Gore -->
+      <path d="M -56 -16 C -56 -64, -30 -98, 0 -98 C -16 -98, -32 -64, -32 -16 C -32 24, -20 56, -10 76 L -18 76 C -36 56, -56 24, -56 -16 Z" fill="url(#goreYellow)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Center-Left Crimson Red Gore -->
+      <path d="M -32 -16 C -32 -64, -16 -98, 0 -98 C 0 -98, 0 24, 0 76 L -10 76 C -20 56, -32 24, -32 -16 Z" fill="url(#goreRed)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Center-Right Golden Yellow Gore -->
+      <path d="M 0 -98 C 16 -98, 32 -64, 32 -16 C 32 24, 20 56, 10 76 L 0 76 C 0 24, 0 -98, 0 -98 Z" fill="url(#goreYellow)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Right Royal Blue Gore -->
+      <path d="M 0 -98 C 30 -98, 56 -64, 56 -16 C 56 24, 36 56, 18 76 L 10 76 C 20 56, 32 24, 32 -16 C 32 -64, 16 -98, 0 -98 Z" fill="url(#goreBlue)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Rightmost Crimson Red Gore -->
+      <path d="M 0 -98 C 38 -98, 72 -68, 72 -18 C 72 22, 48 54, 26 76 L 18 76 C 36 56, 56 24, 56 -16 C 56 -64, 30 -98, 0 -98 Z" fill="url(#goreRed)" stroke="#fde047" stroke-width="1.2"/>
+
+      <!-- Decorative Equator Belt -->
+      <path d="M -71 -16 Q 0 6 71 -16" fill="none" stroke="url(#bcGoldRing)" stroke-width="11"/>
+      <path d="M -71 -16 Q 0 6 71 -16" fill="none" stroke="#b91c1c" stroke-width="5" stroke-dasharray="10 10"/>
+
+      <!-- Balloon Neck Collar -->
+      <rect x="-26" y="73" width="52" height="8" rx="4" fill="url(#bcGoldRing)" stroke="#451a03" stroke-width="1.5"/>
+
+      <!-- Roaring Burner Fire -->
+      <ellipse cx="0" cy="89" rx="13" ry="16" fill="#f97316"/>
+      <ellipse cx="0" cy="90" rx="8" ry="11" fill="#fef08a"/>
+      <ellipse cx="0" cy="91" rx="4" ry="6" fill="#ffffff"/>
+
+      <!-- Rigging Lines -->
+      <line x1="-18" y1="81" x2="-14" y2="106" stroke="#fde047" stroke-width="2"/>
+      <line x1="18" y1="81" x2="14" y2="106" stroke="#fde047" stroke-width="2"/>
+      <line x1="-9" y1="81" x2="-7" y2="106" stroke="#fde047" stroke-width="1.5"/>
+      <line x1="9" y1="81" x2="7" y2="106" stroke="#fde047" stroke-width="1.5"/>
+
+      <!-- 3D Golden-Brown Wicker Basket -->
+      <rect x="-20" y="105" width="40" height="28" rx="5" fill="url(#bcGoldRing)" stroke="#451a03" stroke-width="2.5"/>
+      <line x1="-20" y1="114" x2="20" y2="114" stroke="#78350f" stroke-width="2"/>
+      <line x1="-20" y1="123" x2="20" y2="123" stroke="#78350f" stroke-width="2"/>
+      <line x1="-8" y1="105" x2="-8" y2="133" stroke="#78350f" stroke-width="1.5"/>
+      <line x1="8" y1="105" x2="8" y2="133" stroke="#78350f" stroke-width="1.5"/>
+
+      <!-- DRAMATIC EXPLOSION / CRASH BLAST ON UPPER-RIGHT OF BALLOON -->
+      <g transform="translate(46, -48)">
+        <polygon
+          points="0,-54 14,-22 48,-36 26,-6 58,12 22,18 38,48 6,28 -12,56 -16,22 -50,32 -26,4 -52,-18 -18,-18 -26,-48 -2,-24"
+          fill="#ef4444"
+          stroke="#fde047"
+          stroke-width="2"
+        />
+        <polygon
+          points="0,-40 10,-16 36,-26 18,-4 42,10 16,14 26,34 4,20 -8,40 -12,16 -36,22 -18,2 -36,-14 -12,-14 -18,-34 -2,-18"
+          fill="#f97316"
+        />
+        <polygon
+          points="0,-24 7,-10 22,-15 11,-2 25,6 10,9 15,20 3,12 -5,24 -7,10 -22,13 -11,1 -22,-8 -7,-8 -11,-20 -1,-10"
+          fill="#fef08a"
+        />
+        <circle cx="0" cy="0" r="9" fill="#ffffff"/>
+
+        <!-- Flying Shards & Sparks -->
+        <polygon points="44,-44 58,-52 52,-36" fill="#ef4444"/>
+        <polygon points="62,-8 78,-4 66,6" fill="#3b82f6"/>
+        <polygon points="32,-60 42,-72 46,-56" fill="#facc15"/>
+        <circle cx="64" cy="-26" r="4" fill="#fef08a"/>
+        <circle cx="52" cy="32" r="3.5" fill="#fb923c"/>
+        <circle cx="18" cy="-58" r="3" fill="#fef08a"/>
+        <circle cx="-36" cy="-42" r="3.5" fill="#fde047"/>
+      </g>
+    </g>
+
+    <!-- FOREGROUND SKYDIVER WITH RED-AND-WHITE STRIPED PARACHUTE -->
+    <g transform="translate(274, 212) rotate(10)">
+      <ellipse cx="0" cy="14" rx="46" ry="28" fill="#ef4444" opacity="0.25"/>
+
+      <!-- Main Parachute Dome (Red Base) -->
+      <path
+        d="M -42 22 C -42 -18, 42 -18, 42 22 C 32 16, 22 16, 14 22 C 6 16, -6 16, -14 22 C -22 16, -32 16, -42 22 Z"
+        fill="#ef4444"
+        stroke="#ffffff"
+        stroke-width="2"
+      />
+      <!-- White Striped Panels -->
+      <path
+        d="M -26 20 C -24 -10, -10 -14, 0 -14 C -6 -14, -14 -8, -14 22 C -18 18, -22 18, -26 20 Z"
+        fill="#ffffff"
+      />
+      <path
+        d="M 26 20 C 24 -10, 10 -14, 0 -14 C 6 -14, 14 -8, 14 22 C 18 18, 22 18, 26 20 Z"
+        fill="#ffffff"
+      />
+      <!-- Center Red Rib Highlight -->
+      <path
+        d="M -7 20 C -5 -12, 5 -12, 7 20 C 3 17, -3 17, -7 20 Z"
+        fill="#dc2626"
+      />
+
+      <!-- Parachute Suspension Lines -->
+      <line x1="-38" y1="22" x2="-6" y2="62" stroke="#f1f5f9" stroke-width="1.6"/>
+      <line x1="-14" y1="22" x2="-3" y2="62" stroke="#f1f5f9" stroke-width="1.5"/>
+      <line x1="14" y1="22" x2="3" y2="62" stroke="#f1f5f9" stroke-width="1.5"/>
+      <line x1="38" y1="22" x2="6" y2="62" stroke="#f1f5f9" stroke-width="1.6"/>
+
+      <!-- Skydiver Character -->
+      <g transform="translate(0, 66)">
+        <circle cx="0" cy="-6" r="7.5" fill="#f8fafc" stroke="#1e293b" stroke-width="1.8"/>
+        <path d="M -5 -8 Q 0 -4 5 -8" fill="none" stroke="#0ea5e9" stroke-width="3" stroke-linecap="round"/>
+        <path d="M -14 -2 L -6 -1 L -5 12 L 5 12 L 6 -1 L 14 -2" fill="none" stroke="#ef4444" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="-5.5" y="-1" width="11" height="13" rx="3" fill="#1e293b" stroke="#fde047" stroke-width="1.2"/>
+        <path d="M -3 12 L -8 24 M 3 12 L 8 24" stroke="#1e293b" stroke-width="4" stroke-linecap="round"/>
+      </g>
+    </g>
+
+    <!-- Bottom Rim Clouds Inside Circle -->
+    <g fill="#090d16" opacity="0.88">
+      <circle cx="95" cy="360" r="42"/>
+      <circle cx="155" cy="368" r="46"/>
+      <circle cx="245" cy="368" r="46"/>
+      <circle cx="305" cy="360" r="42"/>
+    </g>
   </g>
 
-  <!-- Hero 3D Hot Air Balloon -->
-  <g transform="translate(180, 178)">
-    <!-- Outer Envelope -->
-    <path d="M -88 -18 C -88 -76, -48 -112, 0 -112 C 48 -112, 88 -76, 88 -18 C 88 26, 48 64, 24 88 L -24 88 C -48 64, -88 26, -88 -18 Z" fill="url(#balloonMain)" stroke="url(#balloonGoldStripe)" stroke-width="3.5"/>
-    <!-- Golden Vertical Ribs -->
-    <path d="M -52 -100 C -66 -40, -52 35, -16 88" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="4"/>
-    <path d="M 52 -100 C 66 -40, 52 35, 16 88" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="4"/>
-    <path d="M -22 -110 C -28 -45, -22 35, -6 88" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="4.5"/>
-    <path d="M 22 -110 C 28 -45, 22 35, 6 88" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="4.5"/>
-    <!-- Decorative Royal Gold Belt Across Balloon -->
-    <path d="M -86 -18 Q 0 4 86 -18" fill="none" stroke="url(#balloonGoldStripe)" stroke-width="10"/>
-    <path d="M -86 -18 Q 0 4 86 -18" fill="none" stroke="#78350f" stroke-width="2" stroke-dasharray="6 6"/>
+  <!-- Inner Golden Ring Highlight Overlay -->
+  <circle cx="200" cy="230" r="144" fill="none" stroke="url(#bcGoldRing)" stroke-width="5"/>
+  <circle cx="200" cy="230" r="139" fill="none" stroke="#fef08a" stroke-opacity="0.45" stroke-width="1.5"/>
 
-    <!-- Center Multiplier Shield on Balloon -->
-    <rect x="-46" y="-52" width="92" height="36" rx="12" fill="#090d16" fill-opacity="0.88" stroke="url(#balloonGoldStripe)" stroke-width="2.5"/>
-    <text x="0" y="-27" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="22" font-weight="900" fill="#fde047">100x+</text>
+  <!-- 3D METALLIC "BALLOON CRASH" TYPOGRAPHY EMBLEM BANNER -->
+  <g transform="translate(200, 382)" filter="url(#textShadow3D)">
+    <path
+      d="M -166 -38 L 166 -38 L 152 62 L -152 62 Z"
+      fill="#090414"
+      fill-opacity="0.92"
+      stroke="url(#bcGoldRing)"
+      stroke-width="3.5"
+    />
+    <path
+      d="M -158 -32 L 158 -32 L 146 56 L -146 56 Z"
+      fill="none"
+      stroke="#fde047"
+      stroke-opacity="0.35"
+      stroke-width="1.2"
+    />
 
-    <!-- Burner Flame Glow -->
-    <ellipse cx="0" cy="98" rx="14" ry="18" fill="#f59e0b" opacity="0.85"/>
-    <ellipse cx="0" cy="99" rx="8" ry="12" fill="#fef08a"/>
+    <!-- "BALLOON" 3D Extruded Gold Text -->
+    <text
+      x="0"
+      y="3"
+      text-anchor="middle"
+      font-family="Arial Black, Impact, sans-serif"
+      font-size="44"
+      font-weight="900"
+      fill="#451a03"
+      letter-spacing="2"
+    >
+      BALLOON
+    </text>
+    <text
+      x="0"
+      y="0"
+      text-anchor="middle"
+      font-family="Arial Black, Impact, sans-serif"
+      font-size="44"
+      font-weight="900"
+      fill="url(#titleGoldGrad)"
+      stroke="#78350f"
+      stroke-width="1.5"
+      letter-spacing="2"
+    >
+      BALLOON
+    </text>
 
-    <!-- Rigging Ropes -->
-    <line x1="-18" y1="88" x2="-14" y2="116" stroke="#fde047" stroke-width="2"/>
-    <line x1="18" y1="88" x2="14" y2="116" stroke="#fde047" stroke-width="2"/>
-
-    <!-- Golden Wicker Basket -->
-    <rect x="-22" y="114" width="44" height="30" rx="6" fill="url(#balloonGoldStripe)" stroke="#78350f" stroke-width="2.5"/>
-    <line x1="-22" y1="124" x2="22" y2="124" stroke="#78350f" stroke-width="1.8"/>
-    <line x1="-22" y1="134" x2="22" y2="134" stroke="#78350f" stroke-width="1.8"/>
+    <!-- "CRASH" 3D Extruded Crimson & Gold Text -->
+    <text
+      x="0"
+      y="49"
+      text-anchor="middle"
+      font-family="Arial Black, Impact, sans-serif"
+      font-size="48"
+      font-weight="900"
+      fill="#2a0404"
+      letter-spacing="4"
+    >
+      CRASH
+    </text>
+    <text
+      x="0"
+      y="45"
+      text-anchor="middle"
+      font-family="Arial Black, Impact, sans-serif"
+      font-size="48"
+      font-weight="900"
+      fill="url(#titleCrashGrad)"
+      stroke="#fde047"
+      stroke-width="1.8"
+      letter-spacing="4"
+    >
+      CRASH
+    </text>
   </g>
-
-  <!-- Stylized Twilight Clouds at Bottom -->
-  <g fill="#0f172a" opacity="0.9">
-    <circle cx="45" cy="400" r="55"/>
-    <circle cx="120" cy="415" r="60"/>
-    <circle cx="245" cy="412" r="64"/>
-    <circle cx="325" cy="398" r="52"/>
-    <rect x="0" y="405" width="360" height="75" fill="#020617"/>
-  </g>
-
-  <!-- Game Title Typography -->
-  <text x="180" y="386" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="31" font-weight="900" fill="url(#textGold)" stroke="#451a03" stroke-width="1.5" letter-spacing="1.5">BALLOON</text>
-  <text x="180" y="422" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="34" font-weight="900" fill="#fb7185" stroke="#4c0519" stroke-width="1.5" letter-spacing="3">CRASH</text>
-  <text x="180" y="444" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="800" fill="#fde047" letter-spacing="2">PARACHUTE ARENA • LKR</text>
 </svg>
 `;
 

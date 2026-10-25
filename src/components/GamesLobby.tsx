@@ -191,6 +191,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
 
   const handleUploadBalloonLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
+    if (currentUser.role !== 'admin') return;
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingBalloon(true);
@@ -217,6 +218,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
 
   const handleUploadMinesLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
+    if (currentUser.role !== 'admin') return;
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingMines(true);
@@ -242,6 +244,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   };
 
   const handleSaveBalloonImageUrl = async () => {
+    if (currentUser.role !== 'admin') return;
     const clean = balloonUrlInput.trim();
     if (!clean) return;
     setIsUploadingBalloon(true);
@@ -257,6 +260,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   };
 
   const handleSaveMinesImageUrl = async () => {
+    if (currentUser.role !== 'admin') return;
     const clean = minesUrlInput.trim();
     if (!clean) return;
     setIsUploadingMines(true);
@@ -455,20 +459,22 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               Crash Game • LKR
             </span>
           </div>
-          <label
-            onClick={(e) => e.stopPropagation()}
-            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
-            title="Upload Custom Balloon Crash Lobby Image"
-          >
-            {isUploadingBalloon ? '⏳ Saving...' : '📷 Add Image'}
-            <input
-              type="file"
-              accept="image/*"
+          {currentUser.role === 'admin' && (
+            <label
               onClick={(e) => e.stopPropagation()}
-              onChange={handleUploadBalloonLobbyImage}
-              className="sr-only"
-            />
-          </label>
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
+              title="Upload Custom Balloon Crash Lobby Image"
+            >
+              {isUploadingBalloon ? '⏳ Saving...' : '📷 Add Image'}
+              <input
+                type="file"
+                accept="image/*"
+                onClick={(e) => e.stopPropagation()}
+                onChange={handleUploadBalloonLobbyImage}
+                className="sr-only"
+              />
+            </label>
+          )}
         </div>
 
         <button
@@ -534,20 +540,22 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               Mines &amp; Instant • LKR
             </span>
           </div>
-          <label
-            onClick={(e) => e.stopPropagation()}
-            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
-            title="Upload Custom Mines Lobby Image"
-          >
-            {isUploadingMines ? '⏳ Saving...' : '📷 Add Image'}
-            <input
-              type="file"
-              accept="image/*"
+          {currentUser.role === 'admin' && (
+            <label
               onClick={(e) => e.stopPropagation()}
-              onChange={handleUploadMinesLobbyImage}
-              className="sr-only"
-            />
-          </label>
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
+              title="Upload Custom Mines Lobby Image"
+            >
+              {isUploadingMines ? '⏳ Saving...' : '📷 Add Image'}
+              <input
+                type="file"
+                accept="image/*"
+                onClick={(e) => e.stopPropagation()}
+                onChange={handleUploadMinesLobbyImage}
+                className="sr-only"
+              />
+            </label>
+          )}
         </div>
 
         <button
@@ -698,7 +706,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         </div>
       )}
 
-      {showImageManagerModal && (
+      {currentUser.role === 'admin' && showImageManagerModal && (
         <div
           className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowImageManagerModal(false)}
@@ -886,14 +894,16 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
             Withdraw
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowImageManagerModal(true)}
-            className="px-3 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-bold text-xs sm:text-sm transition border border-amber-500/50 flex items-center gap-1.5 cursor-pointer"
-            title="Add or Change Game Lobby Images"
-          >
-            <span>🖼️ Add Images</span>
-          </button>
+          {currentUser.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => setShowImageManagerModal(true)}
+              className="px-3 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-bold text-xs sm:text-sm transition border border-amber-500/50 flex items-center gap-1.5 cursor-pointer"
+              title="Add or Change Game Lobby Images (Admin Only)"
+            >
+              <span>🖼️ Add Images</span>
+            </button>
+          )}
 
           {onOpenProfile && (
             <button

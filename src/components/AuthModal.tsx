@@ -3,17 +3,18 @@ import { User } from '../types/game';
 import { LION_BET_LOGO_URL } from '../services/brandAssets';
 import {
   getUsers,
-  saveUser,
   saveUserAndSync,
   setCurrentUser,
   fetchCashAgentsWithPresence,
   recordUserPresenceHeartbeat,
   syncUsersWithServer,
   getUrlReferralCode,
+  normalizeSriLankaPhone,
+  authenticateUserAcrossAllSources,
+  clearReferralQueryFromUrl,
+  startCloudDatabaseRealtimeSync,
 } from '../services/storage';
 import {
-  LogIn,
-  UserPlus,
   User as UserIcon,
   Phone,
   Mail,
@@ -23,6 +24,7 @@ import {
   Check,
   Eye,
   EyeOff,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -71,9 +73,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   });
   const [showRegPassword, setShowRegPassword] = useState(false);
 
-  // Shared Remember Me State
+  // Shared Remember Me & Cloud Sync State
   const [rememberMe, setRememberMe] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [cloudUsersCount, setCloudUsersCount] = useState<number>(() => getUsers().length);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -81,13 +85,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    startCloudDatabaseRealtimeSync();
     setTab(initialTab);
-    const runSync = () => {
-      syncUsersWithServer().catch(() => {});
-      fetchCashAgentsWithPresence().catch(() => {});
+
+    const runSync = async () => {
+      setIsSyncingCloud(true);
+      try {
+        await Promise.all([
+          syncUsersWithServer(true).catch(() => {}),
+          fetchCashAgentsWithPresence().catch(() => {}),
+        ]);
+        setCloudUsersCount(getUsers().length);
+      } finally {
+        setIsSyncingCloud(false);
+      }
     };
     runSync();
-    const timer = setInterval(runSync, 3500);
+
+    const handleStorageChange = () => {
+      setCloudUsersCount(getUsers().length);
+    };
+    window.addEventListener('storage', handleStorageChange);
+    const timer = setInterval(() => {
+      syncUsersWithServer().then((list) => setCloudUsersCount(list.length)).catch(() => {});
+      fetchCashAgentsWithPresence().catch(() => {});
+    }, 3500);
 
     // Check URL or prop for referral / promo code auto-fill
     try {
@@ -100,7 +122,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const cleanRef = urlRef.trim().toUpperCase();
         localStorage.setItem('lionbet_pending_ref_code', cleanRef);
         setPromoCode(cleanRef);
-        setTab('register');
       }
     } catch {}
 
@@ -114,17 +135,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     } catch {}
 
-    return () => clearInterval(timer);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(timer);
+    };
   }, [isOpen, initialTab, initialPromoCode]);
 
   if (!isOpen) return null;
 
-  const normalizePhone = (val: string) => {
-    const d = val.replace(/[\s\-()]/g, '');
-    if (d.startsWith('+94') && d.length >= 11) return '0' + d.slice(3);
-    if (d.startsWith('94') && d.length === 11) return '0' + d.slice(2);
-    if (/^7\d{8}$/.test(d)) return '0' + d;
-    return d;
+  const handleManualCloudSync = async () => {
+    setIsSyncingCloud(true);
+    setError(null);
+    try {
+      await Promise.all([
+        syncUsersWithServer(true).catch(() => {}),
+        fetchCashAgentsWithPresence().catch(() => {}),
+      ]);
+      setCloudUsersCount(getUsers().length);
+    } finally {
+      setIsSyncingCloud(false);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -135,120 +165,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       const cleanId = loginIdentifier.trim();
-      const cleanPhone = normalizePhone(cleanId);
-      const cleanIdLower = cleanId.toLowerCase();
-      const cleanIdCompact = cleanIdLower.replace(/[\s_]+/g, '');
-
-      // Sync latest Admin-created Cash Agents & Users from Cloud Firestore + Server before checking credentials
-      await Promise.all([
-        syncUsersWithServer().catch(() => {}),
-        fetchCashAgentsWithPresence().catch(() => {}),
-      ]);
-      const users = getUsers();
-
-      // Direct Admin Credentials Check: 0711452778 / 12345678
-      if (cleanPhone === '0711452778' || cleanIdLower === 'admin@balloon.lk' || cleanIdLower === 'admin@lionbet.lk') {
-        if (loginPassword !== '12345678') {
-          setError('Invalid admin password.');
-          return;
-        }
-        let adminUser = users.find((u) => u.role === 'admin' || u.id === 'user_admin_1');
-        if (!adminUser) {
-          adminUser = {
-            id: 'user_admin_1',
-            username: 'BalloonAdminLK',
-            mobile: '0711452778',
-            email: 'admin@balloon.lk',
-            password: '12345678',
-            role: 'admin',
-            balance: 150000.0,
-            referralCode: 'ADMINLK',
-            referralCount: 15,
-            referralEarnings: 32000.0,
-            unclaimedReferralRewards: 8500.0,
-            totalWagered: 120000.0,
-            totalWon: 135000.0,
-            isBanned: false,
-            avatar: '👑',
-            createdAt: Date.now(),
-          };
-          await saveUserAndSync(adminUser);
-        }
-        if (rememberMe) {
-          localStorage.setItem(
-            REMEMBER_STORAGE_KEY,
-            JSON.stringify({ identifier: cleanId, password: loginPassword })
-          );
-        } else {
-          localStorage.removeItem(REMEMBER_STORAGE_KEY);
-        }
-        setCurrentUser(adminUser);
-        recordUserPresenceHeartbeat(adminUser);
-        onLoginSuccess(adminUser);
-        onClose();
-        return;
-      }
-
-      // 1. Try server-authoritative login first (which also syncs Cloud Firestore)
-      let serverFoundUser: User | null = null;
-      let serverAuthError: string | null = null;
-      try {
-        const resp = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: cleanId, password: loginPassword }),
-        });
-        const data = await resp.json();
-        if (resp.ok && data?.ok && data?.user) {
-          serverFoundUser = data.user as User;
-        } else if (resp.status === 401 || resp.status === 403) {
-          serverAuthError = data?.error || null;
-        }
-      } catch {}
-
-      // 2. Match user in Cloud-synced local users by Mobile Number, Agent Contact, Email, Username, or Agent ID
-      const latestUsers = getUsers();
-      const localFound = latestUsers.find((u) => {
-        const uPhone = u.mobile ? normalizePhone(u.mobile) : '';
-        const uContact = u.agentContact ? normalizePhone(u.agentContact) : '';
-        const uNamePhone = u.username ? normalizePhone(u.username) : '';
-        const uNameLower = (u.username || '').trim().toLowerCase();
-        const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
-        const uEmailLower = (u.email || '').trim().toLowerCase();
-        return (
-          (cleanPhone &&
-            (uPhone === cleanPhone || uContact === cleanPhone || uNamePhone === cleanPhone)) ||
-          (u.mobile && u.mobile.trim().toLowerCase() === cleanIdLower) ||
-          (u.agentContact && u.agentContact.trim().toLowerCase() === cleanIdLower) ||
-          (uEmailLower && uEmailLower === cleanIdLower) ||
-          uNameLower === cleanIdLower ||
-          uNameCompact === cleanIdCompact ||
-          u.id.toLowerCase() === cleanIdLower
-        );
-      });
-
-      const found = serverFoundUser || localFound;
+      const { user: found, error: authError } = await authenticateUserAcrossAllSources(
+        cleanId,
+        loginPassword
+      );
 
       if (!found) {
         setError(
-          serverAuthError ||
+          authError ||
             'Account not found. Please check your Mobile Number, Username, Email, or Agent Login ID.'
         );
-        return;
-      }
-
-      if (
-        !serverFoundUser &&
-        found.password &&
-        found.password.trim() !== loginPassword.trim() &&
-        found.password !== loginPassword
-      ) {
-        setError('Incorrect password. Please try again.');
-        return;
-      }
-
-      if (found.isBanned) {
-        setError('This account has been suspended by the administrator.');
         return;
       }
 
@@ -261,7 +187,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         localStorage.removeItem(REMEMBER_STORAGE_KEY);
       }
 
-      await saveUserAndSync(found);
+      clearReferralQueryFromUrl();
       setCurrentUser(found);
       recordUserPresenceHeartbeat(found);
       onLoginSuccess(found);
@@ -277,8 +203,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setError(null);
 
     const trimmedName = name.trim();
-    const trimmedMobile = normalizePhone(mobile.trim());
+    const trimmedMobile = normalizeSriLankaPhone(mobile.trim());
     const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim() || password;
 
     if (!trimmedName) {
       setError('Please enter your Name.');
@@ -292,28 +219,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setError('Please enter a valid Email address.');
       return;
     }
-    if (password.length < 6) {
+    if (trimmedPassword.length < 6) {
       setError('Password must be at least 6 characters.');
       return;
     }
-    if (password !== confirmPassword) {
+    if (password !== confirmPassword && trimmedPassword !== confirmPassword.trim()) {
       setError('Passwords do not match. Please confirm your password.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await syncUsersWithServer().catch(() => {});
+      await syncUsersWithServer(true).catch(() => {});
       const users = getUsers();
       if (
         trimmedMobile === '0711452778' ||
-        users.some((u) => u.mobile && normalizePhone(u.mobile) === trimmedMobile)
+        users.some((u) => u.mobile && normalizeSriLankaPhone(u.mobile) === trimmedMobile)
       ) {
-        setError('An account with this Mobile Number already exists.');
+        setError('An account with this Mobile Number already exists. Please switch to Login.');
         return;
       }
       if (users.some((u) => (u.email || '').toLowerCase() === trimmedEmail)) {
-        setError('An account with this Email already exists.');
+        setError('An account with this Email already exists. Please switch to Login.');
         return;
       }
 
@@ -349,7 +276,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         username: trimmedName,
         mobile: trimmedMobile,
         email: trimmedEmail,
-        password,
+        password: trimmedPassword,
         role: 'player',
         balance: 0.0, // Initial balance is 0 until deposit or Admin/Agent balance update
         bonusBalance: 0.0,
@@ -365,25 +292,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         commissionGeneratedForReferrer: 0,
         isBanned: false,
         avatar: randomAvatar,
+        agentContact: trimmedMobile,
         updatedAt: Date.now(),
         createdAt: Date.now(),
       };
 
-      try {
-        localStorage.removeItem('lionbet_pending_ref_code');
-      } catch {}
+      clearReferralQueryFromUrl();
 
       if (rememberMe) {
         localStorage.setItem(
           REMEMBER_STORAGE_KEY,
-          JSON.stringify({ identifier: trimmedMobile, password })
+          JSON.stringify({ identifier: trimmedMobile, password: trimmedPassword })
         );
       } else {
         localStorage.removeItem(REMEMBER_STORAGE_KEY);
       }
 
       // Save the newly registered user & sync to Cloud Firestore + Server so it is immediately available on all devices
-      await saveUserAndSync(newUser);
+      await Promise.all([
+        saveUserAndSync(newUser),
+        fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: newUser }),
+        }).catch(() => {}),
+      ]);
 
       // Update the referrer's referral count & sync to Cloud Firestore + Server
       if (referredByUser) {
@@ -433,6 +366,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </p>
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={handleManualCloudSync}
+            title="Sync accounts from Cloud Database"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-[10px] font-bold text-emerald-300 cursor-pointer transition"
+          >
+            <RefreshCw className={`w-3 h-3 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+            <span>{isSyncingCloud ? 'Syncing...' : `Cloud DB (${cloudUsersCount})`}</span>
+          </button>
         </div>
 
         {/* Tab Switcher */}

@@ -11,6 +11,16 @@ import {
   BetRecord,
 } from '../types/game';
 import firebaseConfig from '../../firebase-applet-config.json';
+import {
+  db,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  onSnapshot,
+} from '../firebase';
 
 const USERS_STORAGE_KEY = 'balloon_users_lkr_db';
 const DELETED_USERS_STORAGE_KEY = 'balloon_deleted_users_lkr_v1';
@@ -24,6 +34,45 @@ const FIRESTORE_BASE_URL = firebaseConfig?.projectId
   ? `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`
   : '';
 const FIRESTORE_API_KEY = firebaseConfig?.apiKey || '';
+
+export function normalizeSriLankaPhone(raw?: string): string {
+  if (!raw) return '';
+  const d = String(raw).replace(/[\s\-().]/g, '');
+  if (d.startsWith('+940') && d.length >= 12) return '0' + d.slice(4);
+  if (d.startsWith('00940') && d.length >= 13) return '0' + d.slice(5);
+  if (d.startsWith('0094') && d.length >= 12) return '0' + d.slice(4);
+  if (d.startsWith('+94') && d.length >= 11) return '0' + d.slice(3);
+  if (d.startsWith('940') && d.length === 12) return '0' + d.slice(3);
+  if (d.startsWith('94') && d.length === 11) return '0' + d.slice(2);
+  if (/^007\d{8}$/.test(d)) return d.slice(1);
+  if (/^7\d{8}$/.test(d)) return '0' + d;
+  return d;
+}
+
+export function clearReferralQueryFromUrl() {
+  try {
+    localStorage.removeItem('lionbet_pending_ref_code');
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      if (
+        params.has('ref') ||
+        params.has('promo') ||
+        params.has('referral') ||
+        params.has('code') ||
+        params.has('r')
+      ) {
+        params.delete('ref');
+        params.delete('promo');
+        params.delete('referral');
+        params.delete('code');
+        params.delete('r');
+        const nextSearch = params.toString();
+        const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`;
+        window.history.replaceState({}, '', nextUrl);
+      }
+    }
+  } catch {}
+}
 
 // Initial users with LKR balances (Players start at Rs. 0 until deposit or Admin/Agent update)
 const INITIAL_USERS: User[] = [
@@ -421,81 +470,159 @@ function saveDeletedUserIdsLocal(ids: Set<string>) {
 }
 
 export async function pushUserToCloudFirestore(user: User): Promise<void> {
-  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY || !user || !user.id || isRemovedFakeAgent(user)) {
+  if (!user || !user.id || isRemovedFakeAgent(user)) {
     return;
   }
-  try {
-    const docId = encodeURIComponent(user.id);
-    await fetch(`${FIRESTORE_BASE_URL}/lionbet_users/${docId}?key=${FIRESTORE_API_KEY}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          id: { stringValue: String(user.id) },
-          json: { stringValue: JSON.stringify(user) },
-          updatedAt: { integerValue: String(user.updatedAt || Date.now()) },
-        },
-      }),
-    });
-  } catch {}
+  const normalizedUser: User = {
+    ...user,
+    mobile: user.mobile ? normalizeSriLankaPhone(user.mobile) : user.mobile,
+    password: user.password || '12345678',
+    updatedAt: user.updatedAt || Date.now(),
+  };
+  const payload = {
+    id: String(normalizedUser.id),
+    json: JSON.stringify(normalizedUser),
+    mobile: String(normalizedUser.mobile || ''),
+    email: String(normalizedUser.email || '').toLowerCase(),
+    username: String(normalizedUser.username || ''),
+    role: String(normalizedUser.role || 'player'),
+    updatedAt: Number(normalizedUser.updatedAt || Date.now()),
+  };
+
+  await Promise.allSettled([
+    // 1. Official Firebase Firestore SDK write
+    setDoc(doc(db, 'lionbet_users', String(normalizedUser.id)), payload).catch(() => {}),
+    // 2. Direct Firestore REST API write fallback
+    FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+      ? fetch(
+          `${FIRESTORE_BASE_URL}/lionbet_users/${encodeURIComponent(
+            normalizedUser.id
+          )}?key=${FIRESTORE_API_KEY}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: {
+                id: { stringValue: payload.id },
+                json: { stringValue: payload.json },
+                mobile: { stringValue: payload.mobile },
+                email: { stringValue: payload.email },
+                username: { stringValue: payload.username },
+                role: { stringValue: payload.role },
+                updatedAt: { integerValue: String(payload.updatedAt) },
+              },
+            }),
+          }
+        ).catch(() => {})
+      : Promise.resolve(),
+  ]);
 }
 
 async function deleteUserFromCloudFirestore(userId: string, deletedSet: Set<string>): Promise<void> {
-  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY || !userId) return;
-  try {
-    const docId = encodeURIComponent(userId);
-    await fetch(`${FIRESTORE_BASE_URL}/lionbet_users/${docId}?key=${FIRESTORE_API_KEY}`, {
-      method: 'DELETE',
-    });
-    await fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          ids: { stringValue: JSON.stringify(Array.from(deletedSet)) },
-          updatedAt: { integerValue: String(Date.now()) },
-        },
-      }),
-    });
-  } catch {}
+  if (!userId) return;
+  const idsJson = JSON.stringify(Array.from(deletedSet));
+  const now = Date.now();
+  await Promise.allSettled([
+    deleteDoc(doc(db, 'lionbet_users', String(userId))).catch(() => {}),
+    setDoc(doc(db, 'lionbet_cloud', 'deleted_users'), {
+      ids: idsJson,
+      updatedAt: now,
+    }).catch(() => {}),
+    FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+      ? fetch(
+          `${FIRESTORE_BASE_URL}/lionbet_users/${encodeURIComponent(userId)}?key=${FIRESTORE_API_KEY}`,
+          { method: 'DELETE' }
+        ).catch(() => {})
+      : Promise.resolve(),
+    FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+      ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              ids: { stringValue: idsJson },
+              updatedAt: { integerValue: String(now) },
+            },
+          }),
+        }).catch(() => {})
+      : Promise.resolve(),
+  ]);
 }
 
-async function fetchUsersFromCloudFirestore(): Promise<{ users: User[]; deletedIds: string[] }> {
-  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY) {
-    return { users: [], deletedIds: [] };
-  }
-  const users: User[] = [];
-  let deletedIds: string[] = [];
+export async function fetchUsersFromCloudFirestore(): Promise<{
+  users: User[];
+  deletedIds: string[];
+}> {
+  const userMap = new Map<string, User>();
+  const deletedSet = new Set<string>();
+
+  // 1. Try Official Firebase Firestore SDK first
   try {
-    const [usersRes, delRes] = await Promise.all([
-      fetch(`${FIRESTORE_BASE_URL}/lionbet_users?pageSize=300&key=${FIRESTORE_API_KEY}`),
-      fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`),
+    const [snap, delSnap] = await Promise.all([
+      getDocs(collection(db, 'lionbet_users')).catch(() => null),
+      getDoc(doc(db, 'lionbet_cloud', 'deleted_users')).catch(() => null),
     ]);
-    if (delRes.ok) {
-      const delData = await delRes.json();
-      const rawIds = delData?.fields?.ids?.stringValue;
-      if (rawIds) {
-        const parsed = JSON.parse(rawIds);
-        if (Array.isArray(parsed)) deletedIds = parsed;
+    if (delSnap && delSnap.exists()) {
+      const data = delSnap.data();
+      if (data?.ids) {
+        try {
+          const parsed = JSON.parse(String(data.ids));
+          if (Array.isArray(parsed)) parsed.forEach((id) => deletedSet.add(String(id)));
+        } catch {}
       }
     }
-    if (usersRes.ok) {
-      const data = await usersRes.json();
-      const docs = Array.isArray(data?.documents) ? data.documents : [];
-      for (const d of docs) {
-        const rawJson = d?.fields?.json?.stringValue;
-        if (rawJson) {
+    if (snap) {
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data?.json) {
           try {
-            const u = JSON.parse(rawJson);
+            const u = JSON.parse(String(data.json)) as User;
             if (u && u.id && !isRemovedFakeAgent(u)) {
-              users.push(u as User);
+              userMap.set(u.id, u);
             }
           } catch {}
         }
-      }
+      });
     }
   } catch {}
-  return { users, deletedIds };
+
+  // 2. Also query Firestore REST API as fallback or supplement
+  if (FIRESTORE_BASE_URL && FIRESTORE_API_KEY && userMap.size === 0) {
+    try {
+      const [usersRes, delRes] = await Promise.all([
+        fetch(`${FIRESTORE_BASE_URL}/lionbet_users?pageSize=300&key=${FIRESTORE_API_KEY}`),
+        fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/deleted_users?key=${FIRESTORE_API_KEY}`),
+      ]);
+      if (delRes.ok) {
+        const delData = await delRes.json();
+        const rawIds = delData?.fields?.ids?.stringValue;
+        if (rawIds) {
+          const parsed = JSON.parse(rawIds);
+          if (Array.isArray(parsed)) parsed.forEach((id: string) => deletedSet.add(String(id)));
+        }
+      }
+      if (usersRes.ok) {
+        const data = await usersRes.json();
+        const docs = Array.isArray(data?.documents) ? data.documents : [];
+        for (const d of docs) {
+          const rawJson = d?.fields?.json?.stringValue;
+          if (rawJson) {
+            try {
+              const u = JSON.parse(rawJson) as User;
+              if (u && u.id && !isRemovedFakeAgent(u)) {
+                userMap.set(u.id, u);
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    users: Array.from(userMap.values()),
+    deletedIds: Array.from(deletedSet),
+  };
 }
 
 export function getUsers(): User[] {
@@ -519,11 +646,42 @@ export function getUsers(): User[] {
       return true;
     });
 
+    // Ensure currently active user in CURRENT_USER_KEY is never missing from USERS_STORAGE_KEY
+    try {
+      const rawCur = localStorage.getItem(CURRENT_USER_KEY);
+      if (rawCur) {
+        const curUser: User = JSON.parse(rawCur);
+        if (
+          curUser &&
+          curUser.id &&
+          !curUser.id.startsWith('guest_') &&
+          !isRemovedFakeAgent(curUser) &&
+          !deletedIds.has(curUser.id) &&
+          !withoutFakeAgents.some((u) => u.id === curUser.id)
+        ) {
+          withoutFakeAgents.push({
+            ...curUser,
+            password: curUser.password || '12345678',
+            mobile: normalizeSriLankaPhone(curUser.mobile || curUser.agentContact || ''),
+            updatedAt: curUser.updatedAt || Date.now(),
+          });
+          updated = true;
+        }
+      }
+    } catch {}
+
     const zeroBalMigrationDone = localStorage.getItem('lionbet_zero_initial_bal_v2') === '1';
-    const customAccountsStampDone = localStorage.getItem('lionbet_custom_accounts_stamp_v4') === '1';
+    const customAccountsStampDone = localStorage.getItem('lionbet_custom_accounts_stamp_v6') === '1';
 
     const migrated = withoutFakeAgents.map((u) => {
       let nextUser = { ...u };
+      if (nextUser.mobile) {
+        const normMob = normalizeSriLankaPhone(nextUser.mobile);
+        if (normMob !== nextUser.mobile) {
+          nextUser.mobile = normMob;
+          updated = true;
+        }
+      }
       if (nextUser.role === 'admin' || nextUser.id === 'user_admin_1') {
         if (nextUser.mobile !== '0711452778' || nextUser.password !== '12345678') {
           updated = true;
@@ -555,10 +713,11 @@ export function getUsers(): User[] {
           nextUser = {
             ...nextUser,
             password: nextUser.password || '12345678',
-            mobile: nextUser.mobile || nextUser.agentContact || '',
+            mobile: normalizeSriLankaPhone(nextUser.mobile || nextUser.agentContact || ''),
             updatedAt: Math.max(nextUser.updatedAt || 0, nextUser.createdAt || 0, Date.now()),
           };
           updated = true;
+          pushUserToCloudFirestore(nextUser).catch(() => {});
         } else if (seedMatch && nextUser.updatedAt === undefined) {
           nextUser = { ...nextUser, updatedAt: 0 };
           updated = true;
@@ -579,7 +738,7 @@ export function getUsers(): User[] {
       localStorage.setItem('lionbet_zero_initial_bal_v2', '1');
     }
     if (!customAccountsStampDone) {
-      localStorage.setItem('lionbet_custom_accounts_stamp_v4', '1');
+      localStorage.setItem('lionbet_custom_accounts_stamp_v6', '1');
     }
 
     // Dynamically sync referralCount with actual referred accounts
@@ -816,19 +975,119 @@ function mergeTwoUsersClient(existing: User, incoming: User): { merged: User; di
 }
 
 let inFlightUsersSync: Promise<User[]> | null = null;
+let realtimeListenersStarted = false;
 
-export async function syncUsersWithServer(): Promise<User[]> {
-  if (inFlightUsersSync) {
+export function startCloudDatabaseRealtimeSync() {
+  if (realtimeListenersStarted || typeof window === 'undefined') return;
+  realtimeListenersStarted = true;
+
+  try {
+    // 1. Live real-time listener on lionbet_users collection in Cloud Firestore
+    onSnapshot(
+      collection(db, 'lionbet_users'),
+      (snapshot) => {
+        const deletedIds = getDeletedUserIds();
+        const remoteUsers: User[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data?.json) {
+            try {
+              const u = JSON.parse(String(data.json)) as User;
+              if (u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id)) {
+                remoteUsers.push(u);
+              }
+            } catch {}
+          }
+        });
+
+        if (remoteUsers.length === 0) return;
+
+        const localUsers = getUsers().filter((u) => !deletedIds.has(u.id));
+        const mergedMap = new Map<string, User>();
+        for (const lu of localUsers) mergedMap.set(lu.id, lu);
+
+        let changed = false;
+        for (const ru of remoteUsers) {
+          const existing = mergedMap.get(ru.id);
+          if (!existing) {
+            mergedMap.set(ru.id, ru);
+            changed = true;
+          } else {
+            const { merged, didChange } = mergeTwoUsersClient(existing, ru);
+            if (didChange) {
+              mergedMap.set(ru.id, merged);
+              changed = true;
+            }
+          }
+        }
+
+        if (changed) {
+          const allUsers = Array.from(mergedMap.values()).filter((u) => !deletedIds.has(u.id));
+          localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+          try {
+            const rawCur = localStorage.getItem(CURRENT_USER_KEY);
+            if (rawCur) {
+              const parsedCur: User = JSON.parse(rawCur);
+              const latestCur = allUsers.find((u) => u.id === parsedCur.id);
+              if (latestCur) {
+                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(latestCur));
+              }
+            }
+            window.dispatchEvent(new Event('storage'));
+          } catch {}
+        }
+      },
+      () => {}
+    );
+
+    // 2. Live real-time listener on deleted_users in Cloud Firestore
+    onSnapshot(
+      doc(db, 'lionbet_cloud', 'deleted_users'),
+      (docSnap) => {
+        if (!docSnap.exists()) return;
+        const data = docSnap.data();
+        if (!data?.ids) return;
+        try {
+          const parsed = JSON.parse(String(data.ids));
+          if (!Array.isArray(parsed)) return;
+          const deletedIds = getDeletedUserIds();
+          let changed = false;
+          for (const id of parsed) {
+            if (id && !deletedIds.has(String(id))) {
+              deletedIds.add(String(id));
+              changed = true;
+            }
+          }
+          if (changed) {
+            saveDeletedUserIdsLocal(deletedIds);
+            const filtered = getUsers().filter((u) => !deletedIds.has(u.id));
+            localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(filtered));
+            window.dispatchEvent(new Event('storage'));
+          }
+        } catch {}
+      },
+      () => {}
+    );
+  } catch {}
+}
+
+export async function syncUsersWithServer(forceFresh = false): Promise<User[]> {
+  startCloudDatabaseRealtimeSync();
+
+  if (inFlightUsersSync && !forceFresh) {
     return inFlightUsersSync;
   }
 
-  inFlightUsersSync = (async () => {
+  const runPromise = (async () => {
     try {
       const [apiResult, cloudResult] = await Promise.all([
         fetch('/api/users')
           .then(async (res) => (res.ok ? res.json() : null))
           .catch(() => null),
-        fetchUsersFromCloudFirestore().catch(() => ({ users: [] as User[], deletedIds: [] as string[] })),
+        fetchUsersFromCloudFirestore().catch(() => ({
+          users: [] as User[],
+          deletedIds: [] as string[],
+        })),
       ]);
 
       const deletedIds = getDeletedUserIds();
@@ -848,10 +1107,14 @@ export async function syncUsersWithServer(): Promise<User[]> {
       }
 
       const serverUsers: User[] = Array.isArray(apiResult?.users)
-        ? apiResult.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id))
+        ? apiResult.users.filter(
+            (u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id)
+          )
         : [];
       const cloudUsers: User[] = Array.isArray(cloudResult?.users)
-        ? cloudResult.users.filter((u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id))
+        ? cloudResult.users.filter(
+            (u: any) => u && u.id && !isRemovedFakeAgent(u) && !deletedIds.has(u.id)
+          )
         : [];
 
       // Re-read latest localUsers AFTER network calls so any saveUser() during fetch is never clobbered
@@ -910,7 +1173,7 @@ export async function syncUsersWithServer(): Promise<User[]> {
         } catch {}
       }
 
-      // Push any local users or agents that are missing or newer in Cloud Firestore / Server
+      // Push any local users or agents that are missing or modified in Cloud Firestore / Server
       const cloudMap = new Map<string, User>();
       for (const cu of cloudUsers) cloudMap.set(cu.id, cu);
 
@@ -919,7 +1182,16 @@ export async function syncUsersWithServer(): Promise<User[]> {
         const isMissingInCloud = !cu;
         const isNewerLocally = (u.updatedAt || 0) > (cu?.updatedAt || 0);
         const isAgentRoleMismatch = isAgentUserRole(u.role) && cu?.role !== u.role;
-        if (isMissingInCloud || isNewerLocally || isAgentRoleMismatch) {
+        const isCredentialMismatch =
+          cu &&
+          ((u.password && u.password !== cu.password) ||
+            (u.mobile && normalizeSriLankaPhone(u.mobile) !== normalizeSriLankaPhone(cu.mobile)));
+        if (
+          isMissingInCloud ||
+          isNewerLocally ||
+          isAgentRoleMismatch ||
+          isCredentialMismatch
+        ) {
           pushUserToCloudFirestore(u).catch(() => {});
         }
       }
@@ -945,11 +1217,182 @@ export async function syncUsersWithServer(): Promise<User[]> {
 
       return allUsers;
     } finally {
-      inFlightUsersSync = null;
+      if (inFlightUsersSync === runPromise) {
+        inFlightUsersSync = null;
+      }
     }
   })();
 
-  return inFlightUsersSync;
+  inFlightUsersSync = runPromise;
+  return runPromise;
+}
+
+export function doesUserMatchIdentifier(u: User, rawIdentifier: string): boolean {
+  if (!u || !u.id || isRemovedFakeAgent(u)) return false;
+  const cleanId = rawIdentifier.trim();
+  if (!cleanId) return false;
+
+  const cleanPhone = normalizeSriLankaPhone(cleanId);
+  const cleanIdLower = cleanId.toLowerCase();
+  const cleanIdCompact = cleanIdLower.replace(/[\s_]+/g, '');
+
+  const uPhone = u.mobile ? normalizeSriLankaPhone(u.mobile) : '';
+  const uContact = u.agentContact ? normalizeSriLankaPhone(u.agentContact) : '';
+  const uNamePhone = u.username ? normalizeSriLankaPhone(u.username) : '';
+  const uNameLower = (u.username || '').trim().toLowerCase();
+  const uNameCompact = uNameLower.replace(/[\s_]+/g, '');
+  const uEmailLower = (u.email || '').trim().toLowerCase();
+  const uIdLower = (u.id || '').trim().toLowerCase();
+  const uRefLower = (u.referralCode || '').trim().toLowerCase();
+
+  if (
+    cleanPhone &&
+    cleanPhone.length >= 9 &&
+    (uPhone === cleanPhone || uContact === cleanPhone || uNamePhone === cleanPhone)
+  ) {
+    return true;
+  }
+  if (u.mobile && u.mobile.trim().toLowerCase() === cleanIdLower) return true;
+  if (u.agentContact && u.agentContact.trim().toLowerCase() === cleanIdLower) return true;
+  if (uEmailLower && uEmailLower === cleanIdLower) return true;
+  if (uNameLower && (uNameLower === cleanIdLower || uNameCompact === cleanIdCompact)) return true;
+  if (uIdLower === cleanIdLower) return true;
+  if (uRefLower && uRefLower === cleanIdLower) return true;
+  return false;
+}
+
+export async function authenticateUserAcrossAllSources(
+  rawIdentifier: string,
+  rawPassword: string
+): Promise<{ user: User | null; error: string | null }> {
+  const cleanId = rawIdentifier.trim();
+  const cleanPhone = normalizeSriLankaPhone(cleanId);
+  const cleanIdLower = cleanId.toLowerCase();
+
+  if (!cleanId) {
+    return { user: null, error: 'Please enter your Mobile Number, Email, or Login ID.' };
+  }
+
+  // 1. Force a fresh pull from Cloud Firestore, /api/users, /api/agents, and /api/auth/login in parallel
+  const [, , serverLoginRes, cloudDirect] = await Promise.all([
+    syncUsersWithServer(true).catch(() => getUsers()),
+    fetchCashAgentsWithPresence().catch(() => []),
+    fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: cleanId, password: rawPassword }),
+    })
+      .then(async (r) => ({ status: r.status, ok: r.ok, data: await r.json().catch(() => null) }))
+      .catch(() => null),
+    fetchUsersFromCloudFirestore().catch(() => ({ users: [] as User[], deletedIds: [] as string[] })),
+  ]);
+
+  // Direct Admin Credentials Check: 0711452778 / 12345678
+  if (
+    cleanPhone === '0711452778' ||
+    cleanIdLower === 'admin@balloon.lk' ||
+    cleanIdLower === 'admin@lionbet.lk'
+  ) {
+    if (rawPassword !== '12345678' && rawPassword.trim() !== '12345678') {
+      return { user: null, error: 'Invalid admin password.' };
+    }
+    const users = getUsers();
+    let adminUser = users.find((u) => u.role === 'admin' || u.id === 'user_admin_1');
+    if (!adminUser) {
+      adminUser = {
+        id: 'user_admin_1',
+        username: 'BalloonAdminLK',
+        mobile: '0711452778',
+        email: 'admin@balloon.lk',
+        password: '12345678',
+        role: 'admin',
+        balance: 150000.0,
+        referralCode: 'ADMINLK',
+        referralCount: 15,
+        referralEarnings: 32000.0,
+        unclaimedReferralRewards: 8500.0,
+        totalWagered: 120000.0,
+        totalWon: 135000.0,
+        isBanned: false,
+        avatar: '👑',
+        createdAt: Date.now(),
+      };
+    }
+    const savedAdmin = await saveUserAndSync(adminUser);
+    clearReferralQueryFromUrl();
+    return { user: savedAdmin, error: null };
+  }
+
+  // If server /api/auth/login succeeded directly, save & return
+  if (serverLoginRes?.ok && serverLoginRes.data?.ok && serverLoginRes.data?.user) {
+    const srvUser = serverLoginRes.data.user as User;
+    const synced = await saveUserAndSync(srvUser);
+    clearReferralQueryFromUrl();
+    return { user: synced, error: null };
+  }
+
+  // Combine candidates from Cloud Firestore direct read + merged local storage
+  const deletedIds = getDeletedUserIds();
+  const candidateMap = new Map<string, User>();
+  for (const u of getUsers()) {
+    if (u && u.id && !deletedIds.has(u.id)) candidateMap.set(u.id, u);
+  }
+  for (const cu of cloudDirect.users) {
+    if (cu && cu.id && !deletedIds.has(cu.id)) {
+      const existing = candidateMap.get(cu.id);
+      if (!existing) {
+        candidateMap.set(cu.id, cu);
+      } else {
+        candidateMap.set(cu.id, mergeTwoUsersClient(existing, cu).merged);
+      }
+    }
+  }
+
+  const allCandidates = Array.from(candidateMap.values());
+  const matchingAccounts = allCandidates.filter((u) => doesUserMatchIdentifier(u, cleanId));
+
+  if (matchingAccounts.length === 0) {
+    return {
+      user: null,
+      error:
+        serverLoginRes?.data?.error ||
+        'Account not found. Please check your Mobile Number, Username, Email, or Agent Login ID.',
+    };
+  }
+
+  // Sort matching accounts so agents and most recently updated records are checked first
+  matchingAccounts.sort((a, b) => {
+    const aAgent = isAgentUserRole(a.role) ? 1 : 0;
+    const bAgent = isAgentUserRole(b.role) ? 1 : 0;
+    if (aAgent !== bAgent) return bAgent - aAgent;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+
+  const passwordMatched = matchingAccounts.find((u) => {
+    if (!u.password) return true;
+    return (
+      u.password === rawPassword ||
+      u.password.trim() === rawPassword.trim()
+    );
+  });
+
+  if (!passwordMatched) {
+    return {
+      user: null,
+      error: 'Incorrect password. Please try again.',
+    };
+  }
+
+  if (passwordMatched.isBanned) {
+    return {
+      user: null,
+      error: 'This account has been suspended by the administrator.',
+    };
+  }
+
+  const syncedUser = await saveUserAndSync(passwordMatched);
+  clearReferralQueryFromUrl();
+  return { user: syncedUser, error: null };
 }
 
 export function getReferredUsersList(referralCode: string): User[] {
@@ -1094,9 +1537,6 @@ const UNAUTHENTICATED_USER_PLACEHOLDER: User = {
 
 export function hasActiveAuthSession(): boolean {
   try {
-    if (getUrlReferralCode()) {
-      return false;
-    }
     if (localStorage.getItem(AUTH_SESSION_KEY) !== '1') return false;
     const raw = localStorage.getItem(CURRENT_USER_KEY);
     if (!raw) return false;
@@ -1481,6 +1921,11 @@ export function getAdminSettings(): AdminSettings {
 
 export function saveAdminSettings(settings: AdminSettings) {
   localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(settings));
+  const now = Date.now();
+  setDoc(doc(db, 'lionbet_cloud', 'settings_v1'), {
+    json: JSON.stringify(settings),
+    updatedAt: now,
+  }).catch(() => {});
   fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1493,7 +1938,7 @@ export function saveAdminSettings(settings: AdminSettings) {
       body: JSON.stringify({
         fields: {
           json: { stringValue: JSON.stringify(settings) },
-          updatedAt: { integerValue: String(Date.now()) },
+          updatedAt: { integerValue: String(now) },
         },
       }),
     }).catch(() => {});
@@ -1502,10 +1947,11 @@ export function saveAdminSettings(settings: AdminSettings) {
 
 export async function syncAdminSettingsWithServer(): Promise<AdminSettings> {
   try {
-    const [apiRes, cloudRes] = await Promise.all([
+    const [apiRes, sdkSnap, cloudRes] = await Promise.all([
       fetch('/api/settings')
         .then(async (r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      getDoc(doc(db, 'lionbet_cloud', 'settings_v1')).catch(() => null),
       FIRESTORE_BASE_URL && FIRESTORE_API_KEY
         ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/settings_v1?key=${FIRESTORE_API_KEY}`)
             .then(async (r) => (r.ok ? r.json() : null))
@@ -1514,10 +1960,11 @@ export async function syncAdminSettingsWithServer(): Promise<AdminSettings> {
     ]);
 
     let cloudSettings: any = null;
-    const rawCloudJson = cloudRes?.fields?.json?.stringValue;
+    const rawSdkJson = sdkSnap && sdkSnap.exists() ? sdkSnap.data()?.json : null;
+    const rawCloudJson = rawSdkJson || cloudRes?.fields?.json?.stringValue;
     if (rawCloudJson) {
       try {
-        cloudSettings = JSON.parse(rawCloudJson);
+        cloudSettings = JSON.parse(String(rawCloudJson));
       } catch {}
     }
 
@@ -1767,23 +2214,29 @@ export function getTransactions(): Transaction[] {
 }
 
 function pushTransactionsToCloud(list: Transaction[]) {
-  if (!FIRESTORE_BASE_URL || !FIRESTORE_API_KEY) return;
   try {
     const compact = list.slice(0, 80).map((t) => ({
       ...t,
       receiptImage:
         t.receiptImage && t.receiptImage.length > 60000 ? undefined : t.receiptImage,
     }));
-    fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/transactions_v1?key=${FIRESTORE_API_KEY}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          json: { stringValue: JSON.stringify(compact) },
-          updatedAt: { integerValue: String(Date.now()) },
-        },
-      }),
+    const now = Date.now();
+    setDoc(doc(db, 'lionbet_cloud', 'transactions_v1'), {
+      json: JSON.stringify(compact),
+      updatedAt: now,
     }).catch(() => {});
+    if (FIRESTORE_BASE_URL && FIRESTORE_API_KEY) {
+      fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/transactions_v1?key=${FIRESTORE_API_KEY}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            json: { stringValue: JSON.stringify(compact) },
+            updatedAt: { integerValue: String(now) },
+          },
+        }),
+      }).catch(() => {});
+    }
   } catch {}
 }
 
@@ -1811,10 +2264,11 @@ export function saveTransactions(list: Transaction[]) {
 
 export async function syncTransactionsWithServer(): Promise<Transaction[]> {
   try {
-    const [apiRes, cloudRes] = await Promise.all([
+    const [apiRes, sdkSnap, cloudRes] = await Promise.all([
       fetch('/api/transactions')
         .then(async (r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      getDoc(doc(db, 'lionbet_cloud', 'transactions_v1')).catch(() => null),
       FIRESTORE_BASE_URL && FIRESTORE_API_KEY
         ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/transactions_v1?key=${FIRESTORE_API_KEY}`)
             .then(async (r) => (r.ok ? r.json() : null))
@@ -1823,10 +2277,11 @@ export async function syncTransactionsWithServer(): Promise<Transaction[]> {
     ]);
 
     let cloudTx: Transaction[] = [];
-    const rawCloudJson = cloudRes?.fields?.json?.stringValue;
+    const rawSdkJson = sdkSnap && sdkSnap.exists() ? sdkSnap.data()?.json : null;
+    const rawCloudJson = rawSdkJson || cloudRes?.fields?.json?.stringValue;
     if (rawCloudJson) {
       try {
-        const parsed = JSON.parse(rawCloudJson);
+        const parsed = JSON.parse(String(rawCloudJson));
         if (Array.isArray(parsed)) cloudTx = parsed;
       } catch {}
     }

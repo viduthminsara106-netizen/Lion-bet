@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cross-device accounts & Cash Agents collection (uses custom mobile/password auth)
+    match /lionbet_users/{userId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasAll(['id', 'json'])
+        && request.resource.data.id is string
+        && request.resource.data.json is string
+        && request.resource.data.json.size() < 100000;
+      allow delete: if true;
+    }
+
+    // Shared cloud state (settings_v1, transactions_v1, deleted_users, bets_v1)
+    match /lionbet_cloud/{docId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.size() <= 10;
+      allow delete: if true;
+    }
+  }
+}

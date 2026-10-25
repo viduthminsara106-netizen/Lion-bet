@@ -54,7 +54,19 @@ function isAgentRole(role?: string): boolean {
 function normalizeSriLankaPhone(raw?: string): string {
   if (!raw) return '';
   const digits = String(raw).replace(/[\s\-()]/g, '');
+  if (digits.startsWith('+940') && digits.length >= 12) {
+    return '0' + digits.slice(4);
+  }
   if (digits.startsWith('+94') && digits.length >= 11) {
+    return '0' + digits.slice(3);
+  }
+  if (digits.startsWith('00940') && digits.length >= 13) {
+    return '0' + digits.slice(5);
+  }
+  if (digits.startsWith('0094') && digits.length >= 12) {
+    return '0' + digits.slice(4);
+  }
+  if (digits.startsWith('940') && digits.length === 12) {
     return '0' + digits.slice(3);
   }
   if (digits.startsWith('94') && digits.length === 11) {
@@ -278,7 +290,7 @@ function saveChatHistory(messages: any[]) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -505,14 +517,19 @@ async function startServer() {
     const incomingUser = req.body?.user;
     const incomingUsers = req.body?.users;
 
-    const upsertOne = (u: any, isExplicitSingleSave: boolean) => {
+    const upsertOne = async (u: any, isExplicitSingleSave: boolean) => {
       if (!u || !u.id || isFakeAgent(u) || deletedUserIds.has(u.id)) return;
+      if (u.mobile) {
+        u.mobile = normalizeSriLankaPhone(u.mobile) || u.mobile;
+      }
       const idx = serverUsers.findIndex((existing) => existing.id === u.id);
       if (idx >= 0) {
         const merged = mergeTwoUserRecords(serverUsers[idx], u, isExplicitSingleSave);
         const changed = JSON.stringify(merged) !== JSON.stringify(serverUsers[idx]);
         serverUsers[idx] = merged;
-        if (isExplicitSingleSave || changed) {
+        if (isExplicitSingleSave) {
+          await pushUserToFirestore(merged).catch(() => {});
+        } else if (changed) {
           pushUserToFirestore(merged).catch(() => {});
         }
       } else {
@@ -521,16 +538,22 @@ async function startServer() {
           updatedAt: isExplicitSingleSave ? Date.now() : u.updatedAt ?? 0,
         };
         serverUsers.push(created);
-        pushUserToFirestore(created).catch(() => {});
+        if (isExplicitSingleSave) {
+          await pushUserToFirestore(created).catch(() => {});
+        } else {
+          pushUserToFirestore(created).catch(() => {});
+        }
       }
     };
 
     if (incomingUser) {
       deletedUserIds.delete(incomingUser.id);
-      upsertOne(incomingUser, true);
+      await upsertOne(incomingUser, true);
     }
     if (Array.isArray(incomingUsers)) {
-      for (const u of incomingUsers) upsertOne(u, false);
+      for (const u of incomingUsers) {
+        await upsertOne(u, false);
+      }
     }
 
     syncAgentsAndUsersLists();
@@ -540,6 +563,50 @@ async function startServer() {
       ok: true,
       users: serverUsers,
       deletedUserIds: Array.from(deletedUserIds),
+    });
+  });
+
+  // Dedicated Cross-Device Registration Endpoint (saves immediately to Server DB & Cloud Firestore)
+  app.post('/api/auth/register', async (req, res) => {
+    await syncWithCloudFirestore(true);
+    syncAgentsAndUsersLists();
+    const incoming = req.body?.user;
+    if (!incoming || !incoming.id || !incoming.username) {
+      return res.status(400).json({ ok: false, error: 'Invalid user registration payload.' });
+    }
+
+    const normPhone = normalizeSriLankaPhone(incoming.mobile);
+    const userRecord = {
+      ...incoming,
+      mobile: normPhone || incoming.mobile,
+      updatedAt: Date.now(),
+      createdAt: incoming.createdAt || Date.now(),
+    };
+
+    deletedUserIds.delete(userRecord.id);
+    const existingIdx = serverUsers.findIndex(
+      (u) =>
+        u.id === userRecord.id ||
+        (normPhone && normalizeSriLankaPhone(u.mobile) === normPhone) ||
+        String(u.username || '').trim().toLowerCase() === String(userRecord.username || '').trim().toLowerCase()
+    );
+
+    if (existingIdx >= 0) {
+      serverUsers[existingIdx] = mergeTwoUserRecords(serverUsers[existingIdx], userRecord, true);
+      await pushUserToFirestore(serverUsers[existingIdx]).catch(() => {});
+    } else {
+      serverUsers.push(userRecord);
+      await pushUserToFirestore(userRecord).catch(() => {});
+    }
+
+    syncAgentsAndUsersLists();
+    recomputeServerReferralCounts();
+    saveServerUsers(serverUsers);
+
+    return res.json({
+      ok: true,
+      user: existingIdx >= 0 ? serverUsers[existingIdx] : userRecord,
+      users: serverUsers,
     });
   });
 

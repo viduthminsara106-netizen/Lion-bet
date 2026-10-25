@@ -32,6 +32,7 @@ import {
   CashAgentWithPresence,
   creditReferrerCommission,
   syncUsersWithServer,
+  normalizeSriLankaPhone,
 } from '../services/storage';
 import {
   ShieldCheck,
@@ -196,15 +197,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const handleCreateCashAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = agentName.trim();
-    const rawMobile = agentMobile.trim().replace(/\s+/g, '');
-    const cleanMobile =
-      rawMobile.startsWith('+94') && rawMobile.length >= 11
-        ? '0' + rawMobile.slice(3)
-        : rawMobile.startsWith('94') && rawMobile.length === 11
-        ? '0' + rawMobile.slice(2)
-        : /^7\d{8}$/.test(rawMobile)
-        ? '0' + rawMobile
-        : rawMobile;
+    const cleanMobile = normalizeSriLankaPhone(agentMobile.trim()) || agentMobile.trim().replace(/\s+/g, '');
     const cleanEmail =
       agentEmail.trim().toLowerCase() ||
       `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}@lionbet.lk`;
@@ -988,7 +981,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 onClick={() => {
                                   const text = `LIONBET Login\nMobile: ${u.mobile || u.email}\nUsername: ${u.username}\nPassword: ${u.password || '12345678'}`;
                                   navigator.clipboard?.writeText(text);
-                                  showToast(`Copied login details for ${u.username}!`);
+                                  notify(`Copied login details for ${u.username}!`);
                                 }}
                                 className="px-2 py-1 rounded bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-[10px] font-bold cursor-pointer"
                               >

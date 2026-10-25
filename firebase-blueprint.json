@@ -1,0 +1,74 @@
+{
+  "entities": {
+    "LionBetUser": {
+      "title": "LionBetUser",
+      "description": "User account record synced across all devices including players, VIPs, admins, and cash agents",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user or agent identifier"
+        },
+        "json": {
+          "type": "string",
+          "description": "Serialized user record payload"
+        },
+        "mobile": {
+          "type": "string",
+          "description": "Normalized Sri Lankan mobile number or login ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "Lowercase email address"
+        },
+        "username": {
+          "type": "string",
+          "description": "Display username"
+        },
+        "role": {
+          "type": "string",
+          "description": "Account role (player, vip, deposit_agent, withdraw_agent, cash_agent, admin)"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Last modification timestamp in ms"
+        }
+      },
+      "required": ["id", "json", "updatedAt"]
+    },
+    "LionBetCloudDoc": {
+      "title": "LionBetCloudDoc",
+      "description": "Shared cloud state document for transactions, admin settings, and deleted user IDs",
+      "type": "object",
+      "properties": {
+        "json": {
+          "type": "string",
+          "description": "Serialized JSON state"
+        },
+        "ids": {
+          "type": "string",
+          "description": "Serialized array of deleted user IDs"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Last modification timestamp in ms"
+        }
+      },
+      "required": ["updatedAt"]
+    }
+  },
+  "firestore": {
+    "/lionbet_users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/LionBetUser"
+      },
+      "description": "Cross-device user accounts and cash agents collection"
+    },
+    "/lionbet_cloud/{docId}": {
+      "schema": {
+        "$ref": "#/entities/LionBetCloudDoc"
+      },
+      "description": "Cross-device shared state (settings, transactions, deleted users)"
+    }
+  }
+}

@@ -1930,11 +1930,11 @@ export default function App() {
             setCurrentUserState(updated);
             saveUser(updated);
             pushNotification({
-              title: `💎 Lanka Mines Cashout (${multiplier.toFixed(2)}x)!`,
+              title: `💎 Mines Cashout (${multiplier.toFixed(2)}x)!`,
               message: `You cashed out Rs. ${winAmount.toLocaleString('en-LK', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
-              })} LKR in Lanka Mines!`,
+              })} LKR in Mines!`,
               category: 'win',
               badgeText: `+Rs. ${winAmount.toLocaleString()}`,
             });

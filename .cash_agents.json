@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "adminOnlineStatus": true,
+    "id": "agent_1792742045649",
+    "username": "Lanka Pay Service",
+    "mobile": "0762713640",
+    "email": "lankapayservice@lionbet.lk",
+    "password": "@dilki1234",
+    "role": "deposit_agent",
+    "balance": 500000,
+    "referralCode": "AG7324",
+    "referralCount": 0,
+    "referralEarnings": 0,
+    "unclaimedReferralRewards": 0,
+    "totalWagered": 0,
+    "totalWon": 0,
+    "isBanned": false,
+    "avatar": "💼",
+    "agentContact": "0762713640",
+    "createdByAdmin": true,
+    "createdAt": 1792742045650,
+    "updatedAt": 1792913284042,
+    "bonusBalance": 0,
+    "hasReceivedFirstDepositBonus": false,
+    "totalDeposited": 0,
+    "commissionGeneratedForReferrer": 0
+  }
+]

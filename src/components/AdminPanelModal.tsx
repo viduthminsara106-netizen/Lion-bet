@@ -2330,7 +2330,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           })()}
 
           {/* =================================================================
-              7. LANKA MINES LKR — RISK LEVEL, LOSE RATE & BOMB TRAP ENGINE
+              7. MINES LKR — RISK LEVEL, LOSE RATE & BOMB TRAP ENGINE
               ================================================================= */}
           {activeTab === 'mines_engine' && (() => {
             const mCfg = getMinesEngineConfig();
@@ -2378,7 +2378,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <div>
                     <h4 className="font-black text-white text-sm flex items-center gap-2">
                       <span>💎</span>
-                      <span>Lanka Mines LKR — Risk Level, Lose Rate &amp; Trap Engine</span>
+                      <span>Mines LKR — Risk Level, Lose Rate &amp; Trap Engine</span>
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5">
                       Control Mines Risk Level, Lose Rate %, House Edge %, Min/Max Bet (LKR), and Force Next Click Bomb in real time across all devices.
@@ -2392,7 +2392,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         updateMinesEngineConfig(
                           { forceNextClickMine: !mCfg.forceNextClickMine },
                           !mCfg.forceNextClickMine
-                            ? '💣 ARMED: Next tile clicked in Lanka Mines will be a guaranteed MINE!'
+                            ? '💣 ARMED: Next tile clicked in Mines will be a guaranteed MINE!'
                             : 'Disarmed Force Next Click Mine'
                         )
                       }
@@ -2415,7 +2415,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       onClick={() =>
                         updateMinesEngineConfig(
                           { isGamePaused: !mCfg.isGamePaused },
-                          `Lanka Mines is now ${!mCfg.isGamePaused ? 'PAUSED' : 'ACTIVE'}`
+                          `Mines is now ${!mCfg.isGamePaused ? 'PAUSED' : 'ACTIVE'}`
                         )
                       }
                       className={`px-3 py-2 rounded-xl font-black text-xs border transition cursor-pointer ${
@@ -2478,7 +2478,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <table className="w-full min-w-[700px] text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-slate-700 text-[11px] uppercase font-black text-slate-300 bg-slate-900">
-                        <th className="p-3 border-r border-slate-800">Lanka Mines Parameter</th>
+                        <th className="p-3 border-r border-slate-800">Mines Parameter</th>
                         <th className="p-3 border-r border-slate-800">Current Value</th>
                         <th className="p-3">Control / Adjustment</th>
                       </tr>

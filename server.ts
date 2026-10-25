@@ -793,6 +793,41 @@ async function startServer() {
     }
   });
 
+  // Persistent Mines Lobby Image Upload & Retrieval (syncs across all devices)
+  app.get('/api/lobby-image/mines', (_req, res) => {
+    const customImage = serverAdminSettings?.minesLobbyImage || null;
+    res.json({ ok: true, imageUrl: customImage });
+  });
+
+  app.post('/api/lobby-image/mines', (req, res) => {
+    try {
+      const dataUrl = String(req.body?.imageDataUrl || '').trim();
+      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+        return res.status(400).json({ ok: false, error: 'Invalid image data' });
+      }
+      const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+      let savedUrl = dataUrl;
+      if (match) {
+        const ext = match[1] === 'jpeg' ? 'jpg' : match[1] === 'svg+xml' ? 'svg' : match[1];
+        const base64Data = match[2];
+        const fileName = `mines_custom.${ext}`;
+        const publicDir = path.join(__dirname, 'public', 'assets', 'aistudio');
+        fs.mkdirSync(publicDir, { recursive: true });
+        fs.writeFileSync(path.join(publicDir, fileName), Buffer.from(base64Data, 'base64'));
+        savedUrl = `/assets/aistudio/${fileName}?v=${Date.now()}`;
+      }
+      serverAdminSettings = {
+        ...(serverAdminSettings || {}),
+        minesLobbyImage: dataUrl,
+        minesLobbyImageFileUrl: savedUrl,
+      };
+      saveServerAdminSettings(serverAdminSettings);
+      return res.json({ ok: true, imageUrl: dataUrl, fileUrl: savedUrl });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || 'Failed to save image' });
+    }
+  });
+
   const isUserOnlineNow = (agent: any) => {
     const entry = activePresence.get(agent.id);
     if (typeof agent.adminOnlineStatus === 'boolean') {

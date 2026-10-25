@@ -5,6 +5,7 @@ import {
   LION_BET_LOGO_URL,
   BALLOON_CRASH_LOGO_URL,
   BALLOON_CRASH_BG_URL,
+  LANKA_MINES_COVER_URL,
   WORLD_SPORTS_COVER_URL,
   COMING_SOON_GAME_COVERS,
 } from '../services/brandAssets';
@@ -139,8 +140,15 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       return null;
     }
   });
+  const [customMinesImage, setCustomMinesImage] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('mines_custom_lobby_image');
+    } catch {
+      return null;
+    }
+  });
 
-  // Sync custom Balloon Crash lobby image from server
+  // Sync custom Balloon Crash & Mines lobby images from server
   useEffect(() => {
     fetch('/api/lobby-image/balloon-crash')
       .then((r) => r.json())
@@ -149,6 +157,18 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           setCustomBalloonImage(data.imageUrl);
           try {
             localStorage.setItem('balloon_crash_custom_lobby_image', data.imageUrl);
+          } catch {}
+        }
+      })
+      .catch(() => {});
+
+    fetch('/api/lobby-image/mines')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.ok && data.imageUrl) {
+          setCustomMinesImage(data.imageUrl);
+          try {
+            localStorage.setItem('mines_custom_lobby_image', data.imageUrl);
           } catch {}
         }
       })
@@ -167,6 +187,27 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           localStorage.setItem('balloon_crash_custom_lobby_image', dataUrl);
         } catch {}
         fetch('/api/lobby-image/balloon-crash', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageDataUrl: dataUrl }),
+        }).catch(() => {});
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadMinesLobbyImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = String(reader.result || '');
+      if (dataUrl.startsWith('data:image/')) {
+        setCustomMinesImage(dataUrl);
+        try {
+          localStorage.setItem('mines_custom_lobby_image', dataUrl);
+        } catch {}
+        fetch('/api/lobby-image/mines', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageDataUrl: dataUrl }),
@@ -246,6 +287,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
 
   const BALLOON_CRASH_BG_IMAGE = BALLOON_CRASH_BG_URL;
   const BALLOON_CRASH_LOGO = customBalloonImage || BALLOON_CRASH_LOGO_URL;
+  const MINES_LOGO = customMinesImage || LANKA_MINES_COVER_URL;
 
   const renderSportsBettingCard = () => (
     <div
@@ -394,147 +436,23 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   const renderLankaMinesCard = () => (
     <div
       onClick={() => onSelectMines?.()}
-      className="group relative rounded-xl overflow-hidden border border-emerald-500/60 hover:border-emerald-400 bg-slate-900 shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+      className="group relative rounded-xl overflow-hidden border-2 border-amber-500/70 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 cursor-pointer flex flex-col justify-between"
     >
-      {/* Classic Lanka Mines Cover */}
-      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#06101e] flex flex-col items-center justify-center">
-        <svg
-          viewBox="0 0 240 300"
-          className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-300"
-        >
-          <defs>
-            <linearGradient id="minesBgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#064e3b" stopOpacity="0.55" />
-              <stop offset="55%" stopColor="#0f172a" stopOpacity="0.9" />
-              <stop offset="100%" stopColor="#020617" stopOpacity="0.98" />
-            </linearGradient>
-            <linearGradient id="gemFacetTop" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#a7f3d0" />
-              <stop offset="50%" stopColor="#34d399" />
-              <stop offset="100%" stopColor="#059669" />
-            </linearGradient>
-            <linearGradient id="gemFacetBody" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#34d399" />
-              <stop offset="60%" stopColor="#10b981" />
-              <stop offset="100%" stopColor="#065f46" />
-            </linearGradient>
-            <radialGradient id="bombBodyGrad" cx="38%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#475569" />
-              <stop offset="55%" stopColor="#1e293b" />
-              <stop offset="100%" stopColor="#020617" />
-            </radialGradient>
-            <linearGradient id="goldTextGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#fde68a" />
-              <stop offset="50%" stopColor="#f59e0b" />
-              <stop offset="100%" stopColor="#b45309" />
-            </linearGradient>
-          </defs>
+      {/* Mines Lobby Cover Image */}
+      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#040814] flex flex-col items-center justify-center">
+        <img
+          src={MINES_LOGO}
+          alt="Mines Lobby Cover"
+          className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-300"
+        />
 
-          <rect width="240" height="300" fill="url(#minesBgGrad)" />
-
-          {/* Classic 5x5 Vault Grid Background */}
-          <g transform="translate(22, 62)" opacity="0.85">
-            {Array.from({ length: 25 }).map((_, i) => {
-              const r = Math.floor(i / 5);
-              const c = i % 5;
-              const x = c * 40;
-              const y = r * 34;
-              const isHighlightGem = i === 6 || i === 8 || i === 12 || i === 16;
-              const isHighlightBomb = i === 13 || i === 18;
-              return (
-                <rect
-                  key={i}
-                  x={x}
-                  y={y}
-                  width="35"
-                  height="29"
-                  rx="5"
-                  fill={
-                    isHighlightGem
-                      ? 'rgba(16, 185, 129, 0.25)'
-                      : isHighlightBomb
-                      ? 'rgba(244, 63, 94, 0.25)'
-                      : 'rgba(15, 23, 42, 0.9)'
-                  }
-                  stroke={
-                    isHighlightGem
-                      ? '#34d399'
-                      : isHighlightBomb
-                      ? '#fb7185'
-                      : 'rgba(51, 65, 85, 0.7)'
-                  }
-                  strokeWidth="1.5"
-                />
-              );
-            })}
-          </g>
-
-          {/* Faceted Emerald Diamond */}
-          <g transform="translate(34, 88)">
-            <circle cx="52" cy="54" r="44" fill="#10b981" fillOpacity="0.18" />
-            <polygon
-              points="28,12 76,12 98,38 52,98 6,38"
-              fill="url(#gemFacetBody)"
-              stroke="#a7f3d0"
-              strokeWidth="2.5"
-            />
-            <polygon points="28,12 76,12 66,38 38,38" fill="url(#gemFacetTop)" />
-            <polygon points="6,38 28,12 38,38" fill="#6ee7b7" fillOpacity="0.8" />
-            <polygon points="98,38 76,12 66,38" fill="#059669" fillOpacity="0.9" />
-            <polygon points="38,38 66,38 52,98" fill="#34d399" fillOpacity="0.65" />
-          </g>
-
-          {/* Classic Naval Mine */}
-          <g transform="translate(122, 118)">
-            <circle cx="46" cy="48" r="36" fill="#f43f5e" fillOpacity="0.2" />
-            <line x1="46" y1="8" x2="46" y2="88" stroke="#f43f5e" strokeWidth="5.5" strokeLinecap="round" />
-            <line x1="6" y1="48" x2="86" y2="48" stroke="#f43f5e" strokeWidth="5.5" strokeLinecap="round" />
-            <line x1="17" y1="19" x2="75" y2="77" stroke="#fb7185" strokeWidth="5" strokeLinecap="round" />
-            <line x1="75" y1="19" x2="17" y2="77" stroke="#fb7185" strokeWidth="5" strokeLinecap="round" />
-            <circle
-              cx="46"
-              cy="48"
-              r="27"
-              fill="url(#bombBodyGrad)"
-              stroke="#fb7185"
-              strokeWidth="2.5"
-            />
-            <ellipse cx="36" cy="37" rx="8" ry="5" fill="#94a3b8" fillOpacity="0.45" transform="rotate(-25 36 37)" />
-            <circle cx="46" cy="48" r="9" fill="#ef4444" />
-            <circle cx="46" cy="48" r="4" fill="#fef08a" />
-          </g>
-
-          <text
-            x="120"
-            y="244"
-            textAnchor="middle"
-            fill="url(#goldTextGrad)"
-            fontSize="22"
-            fontWeight="900"
-            letterSpacing="2"
-          >
-            LANKA MINES
-          </text>
-          <text
-            x="120"
-            y="262"
-            textAnchor="middle"
-            fill="#6ee7b7"
-            fontSize="10"
-            fontWeight="800"
-            letterSpacing="1.5"
-          >
-            5x5 CLASSIC VAULT • LKR
-          </text>
-        </svg>
-
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-slate-950/35 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-slate-950/25 pointer-events-none" />
 
         {/* Top Live Badge + Online Count */}
         <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 z-10">
           <div className="flex flex-col items-start gap-1">
             <span className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-white" />
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
               LIVE
             </span>
             <span className="px-2 py-0.5 rounded bg-slate-950/95 border border-emerald-500/60 text-emerald-400 text-[9px] font-bold font-mono tabular-nums flex items-center gap-1">
@@ -542,28 +460,45 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               <span>{minesOnlineCount} Online</span>
             </span>
           </div>
-          <span className="px-1.5 py-0.5 rounded bg-slate-950/90 border border-emerald-500/50 text-emerald-400 text-[8px] font-bold uppercase">
+          <span className="px-1.5 py-0.5 rounded bg-slate-950/90 border border-amber-500/60 text-amber-400 text-[8px] font-bold uppercase">
             MINES
           </span>
         </div>
 
         {/* Bottom Tag */}
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between z-10">
-          <span className="px-2 py-0.5 rounded bg-slate-950/85 border border-slate-700 text-emerald-300 text-[9px] font-semibold">
-            Min Bet Rs. 10 LKR
+        <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-center z-10">
+          <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[8.5px] font-bold tracking-wider uppercase shadow">
+            5x5 Diamond &amp; Skull Arena • Min Rs. 10
           </span>
         </div>
       </div>
 
-      {/* Classic Card Footer */}
+      {/* Card Footer */}
       <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
-        <div>
-          <h3 className="text-xs sm:text-sm font-bold text-white truncate">
-            Lanka Mines
-          </h3>
-          <span className="text-[10px] text-emerald-400 font-medium block">
-            Mines &amp; Instant • LKR
-          </span>
+        <div className="flex items-center justify-between gap-1">
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-white truncate">
+              Mines
+            </h3>
+            <span className="text-[10px] text-amber-400 font-medium block">
+              Mines &amp; Instant • LKR
+            </span>
+          </div>
+          {currentUser.role === 'admin' && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300 text-[9px] font-bold cursor-pointer shrink-0 transition"
+              title="Upload Custom Mines Lobby Image"
+            >
+              📷 Image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleUploadMinesLobbyImage}
+                className="hidden"
+              />
+            </label>
+          )}
         </div>
 
         <button
@@ -572,9 +507,9 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
             e.stopPropagation();
             onSelectMines?.();
           }}
-          className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer"
+          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
         >
-          <Play className="w-3.5 h-3.5 fill-white" />
+          <Play className="w-3.5 h-3.5 fill-slate-950" />
           <span>PLAY NOW</span>
         </button>
       </div>

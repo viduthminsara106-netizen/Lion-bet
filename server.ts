@@ -758,9 +758,18 @@ async function startServer() {
     res.json({ ok: true, settings: serverAdminSettings });
   });
 
+  const isValidCustomImageStr = (val: unknown): val is string => {
+    if (typeof val !== 'string') return false;
+    const s = val.trim();
+    if (!s || s.startsWith('data:image/svg+xml;utf8,')) return false;
+    return s.startsWith('data:image/') || s.startsWith('https://') || s.startsWith('http://');
+  };
+
   // Persistent Balloon Crash Lobby Image Upload & Retrieval (syncs across all devices & Vercel via Cloud Firestore)
   app.get('/api/lobby-image/balloon-crash', async (_req, res) => {
-    let customImage = serverAdminSettings?.balloonCrashLobbyImage || null;
+    let customImage = isValidCustomImageStr(serverAdminSettings?.balloonCrashLobbyImage)
+      ? serverAdminSettings.balloonCrashLobbyImage
+      : null;
     if (!customImage && fbConfig) {
       try {
         const cloudRes = await fetch(
@@ -769,8 +778,8 @@ async function startServer() {
         if (cloudRes.ok) {
           const data = await cloudRes.json();
           const cloudImg = data?.fields?.imageUrl?.stringValue;
-          if (cloudImg && String(cloudImg).startsWith('data:image/')) {
-            customImage = String(cloudImg);
+          if (isValidCustomImageStr(cloudImg)) {
+            customImage = cloudImg;
             serverAdminSettings = {
               ...(serverAdminSettings || {}),
               balloonCrashLobbyImage: customImage,
@@ -786,7 +795,7 @@ async function startServer() {
   app.post('/api/lobby-image/balloon-crash', async (req, res) => {
     try {
       const dataUrl = String(req.body?.imageDataUrl || '').trim();
-      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+      if (!isValidCustomImageStr(dataUrl)) {
         return res.status(400).json({ ok: false, error: 'Invalid image data' });
       }
       const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
@@ -829,7 +838,9 @@ async function startServer() {
 
   // Persistent Mines Lobby Image Upload & Retrieval (syncs across all devices & Vercel via Cloud Firestore)
   app.get('/api/lobby-image/mines', async (_req, res) => {
-    let customImage = serverAdminSettings?.minesLobbyImage || null;
+    let customImage = isValidCustomImageStr(serverAdminSettings?.minesLobbyImage)
+      ? serverAdminSettings.minesLobbyImage
+      : null;
     if (!customImage && fbConfig) {
       try {
         const cloudRes = await fetch(
@@ -838,8 +849,8 @@ async function startServer() {
         if (cloudRes.ok) {
           const data = await cloudRes.json();
           const cloudImg = data?.fields?.imageUrl?.stringValue;
-          if (cloudImg && String(cloudImg).startsWith('data:image/')) {
-            customImage = String(cloudImg);
+          if (isValidCustomImageStr(cloudImg)) {
+            customImage = cloudImg;
             serverAdminSettings = {
               ...(serverAdminSettings || {}),
               minesLobbyImage: customImage,
@@ -855,7 +866,7 @@ async function startServer() {
   app.post('/api/lobby-image/mines', async (req, res) => {
     try {
       const dataUrl = String(req.body?.imageDataUrl || '').trim();
-      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+      if (!isValidCustomImageStr(dataUrl)) {
         return res.status(400).json({ ok: false, error: 'Invalid image data' });
       }
       const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);

@@ -2463,54 +2463,106 @@ export function getLeaderboard(): LeaderboardEntry[] {
   ];
 }
 
+function isCustomUploadedImage(val: unknown): val is string {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  // Built-in default covers use `data:image/svg+xml;utf8,` — ignore those so they never overwrite user-uploaded photos
+  if (trimmed.startsWith('data:image/svg+xml;utf8,')) return false;
+  return (
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('/assets/')
+  );
+}
+
 /**
- * Compresses & resizes an uploaded image file to a crisp high-DPI JPEG Data URL (< 150KB)
- * so it can be stored reliably in Firebase Cloud Firestore (< 1MB limit) and synced to Vercel & all devices.
+ * Compresses & resizes ANY uploaded image file (JPG, PNG, WEBP, GIF, or mobile gallery file)
+ * to a crisp JPEG Data URL (< 140KB) so it saves reliably in localStorage, Server, and Firebase Cloud Firestore.
  */
 export function compressImageFileToDataUrl(
   file: File,
   maxWidth = 600,
   maxHeight = 800,
-  quality = 0.86
+  quality = 0.85
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const drawToCanvas = (img: HTMLImageElement, fallbackUrl?: string) => {
+      try {
+        let w = img.naturalWidth || img.width || maxWidth;
+        let h = img.naturalHeight || img.height || maxHeight;
+        const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
+        w = Math.max(1, Math.round(w * ratio));
+        h = Math.max(1, Math.round(h * ratio));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          if (fallbackUrl) resolve(fallbackUrl);
+          else reject(new Error('Canvas context unavailable'));
+          return;
+        }
+        ctx.fillStyle = '#040814';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        let compressed = canvas.toDataURL('image/jpeg', quality);
+        // Ensure it stays well below Firestore's 1MB limit
+        if (compressed.length > 750000) {
+          compressed = canvas.toDataURL('image/jpeg', 0.65);
+        }
+        resolve(compressed);
+      } catch (err) {
+        if (fallbackUrl) resolve(fallbackUrl);
+        else reject(err);
+      }
+    };
+
+    // Primary path: load via Object URL (works even if mobile browser omits MIME type)
+    let objectUrl = '';
+    try {
+      objectUrl = URL.createObjectURL(file);
+    } catch {}
+
+    if (objectUrl) {
+      const img = new Image();
+      img.onload = () => {
+        drawToCanvas(img);
+        try {
+          URL.revokeObjectURL(objectUrl);
+        } catch {}
+      };
+      img.onerror = () => {
+        try {
+          URL.revokeObjectURL(objectUrl);
+        } catch {}
+        // Fallback to FileReader
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Failed to read image file'));
+        reader.onload = () => {
+          const raw = String(reader.result || '');
+          if (raw) resolve(raw);
+          else reject(new Error('Empty image file'));
+        };
+        reader.readAsDataURL(file);
+      };
+      img.src = objectUrl;
+      return;
+    }
+
+    // Fallback path: FileReader
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.onload = () => {
       const rawDataUrl = String(reader.result || '');
-      if (!rawDataUrl.startsWith('data:image/')) {
-        reject(new Error('Invalid image file'));
-        return;
-      }
-      // If it's an SVG or already small (< 180KB), keep as-is
-      if (rawDataUrl.startsWith('data:image/svg') || rawDataUrl.length < 180000) {
-        resolve(rawDataUrl);
+      if (!rawDataUrl) {
+        reject(new Error('Empty file'));
         return;
       }
       const img = new Image();
       img.onerror = () => resolve(rawDataUrl);
-      img.onload = () => {
-        try {
-          let w = img.naturalWidth || img.width || maxWidth;
-          let h = img.naturalHeight || img.height || maxHeight;
-          const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
-          w = Math.max(1, Math.round(w * ratio));
-          h = Math.max(1, Math.round(h * ratio));
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(rawDataUrl);
-            return;
-          }
-          ctx.drawImage(img, 0, 0, w, h);
-          const compressed = canvas.toDataURL('image/jpeg', quality);
-          resolve(compressed);
-        } catch {
-          resolve(rawDataUrl);
-        }
-      };
+      img.onload = () => drawToCanvas(img, rawDataUrl);
       img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
@@ -2526,7 +2578,8 @@ export async function saveLobbyImageToCloud(
   gameKey: 'balloon_crash' | 'mines',
   dataUrl: string
 ): Promise<void> {
-  if (!dataUrl || !dataUrl.startsWith('data:image/')) return;
+  const cleanUrl = String(dataUrl || '').trim();
+  if (!isCustomUploadedImage(cleanUrl)) return;
   const localKey =
     gameKey === 'balloon_crash'
       ? 'balloon_crash_custom_lobby_image'
@@ -2542,12 +2595,20 @@ export async function saveLobbyImageToCloud(
   const now = Date.now();
 
   try {
-    localStorage.setItem(localKey, dataUrl);
+    localStorage.setItem(localKey, cleanUrl);
+  } catch {}
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent('lionbet-lobby-image-updated', {
+        detail: { gameKey, imageUrl: cleanUrl },
+      })
+    );
   } catch {}
 
   await Promise.all([
     setDoc(doc(db, 'lionbet_cloud', docId), {
-      imageUrl: dataUrl,
+      imageUrl: cleanUrl,
       updatedAt: now,
     }).catch(() => {}),
     FIRESTORE_BASE_URL && FIRESTORE_API_KEY
@@ -2556,7 +2617,7 @@ export async function saveLobbyImageToCloud(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             fields: {
-              imageUrl: { stringValue: dataUrl },
+              imageUrl: { stringValue: cleanUrl },
               updatedAt: { integerValue: String(now) },
             },
           }),
@@ -2565,7 +2626,7 @@ export async function saveLobbyImageToCloud(
     fetch(apiPath, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageDataUrl: dataUrl }),
+      body: JSON.stringify({ imageDataUrl: cleanUrl }),
     }).catch(() => {}),
   ]);
 }
@@ -2607,27 +2668,27 @@ export async function fetchLobbyImagesFromCloud(): Promise<{
         .catch(() => null),
     ]);
 
-    const bcCandidate =
-      (bcSdk && bcSdk.exists() ? bcSdk.data()?.imageUrl : null) ||
-      bcRest?.fields?.imageUrl?.stringValue ||
-      bcApi?.imageUrl ||
-      null;
-
-    const mCandidate =
-      (mSdk && mSdk.exists() ? mSdk.data()?.imageUrl : null) ||
-      mRest?.fields?.imageUrl?.stringValue ||
-      mApi?.imageUrl ||
-      null;
-
-    if (bcCandidate && String(bcCandidate).startsWith('data:image/')) {
-      balloonCrashImage = String(bcCandidate);
+    const bcCandidates = [
+      bcSdk && bcSdk.exists() ? bcSdk.data()?.imageUrl : null,
+      bcRest?.fields?.imageUrl?.stringValue,
+      bcApi?.imageUrl,
+    ];
+    const validBc = bcCandidates.find((c) => isCustomUploadedImage(c));
+    if (validBc) {
+      balloonCrashImage = validBc;
       try {
         localStorage.setItem('balloon_crash_custom_lobby_image', balloonCrashImage);
       } catch {}
     }
 
-    if (mCandidate && String(mCandidate).startsWith('data:image/')) {
-      minesImage = String(mCandidate);
+    const mCandidates = [
+      mSdk && mSdk.exists() ? mSdk.data()?.imageUrl : null,
+      mRest?.fields?.imageUrl?.stringValue,
+      mApi?.imageUrl,
+    ];
+    const validMines = mCandidates.find((c) => isCustomUploadedImage(c));
+    if (validMines) {
+      minesImage = validMines;
       try {
         localStorage.setItem('mines_custom_lobby_image', minesImage);
       } catch {}
@@ -2646,17 +2707,32 @@ export function subscribeLobbyImagesFromCloud(
   let unsubBalloon: (() => void) | null = null;
   let unsubMines: (() => void) | null = null;
 
+  const handleLocalEvent = (e: Event) => {
+    const customEvent = e as CustomEvent<{ gameKey: 'balloon_crash' | 'mines'; imageUrl: string }>;
+    const detail = customEvent?.detail;
+    if (!detail || !isCustomUploadedImage(detail.imageUrl)) return;
+    if (detail.gameKey === 'balloon_crash') {
+      onUpdate({ balloonCrashImage: detail.imageUrl });
+    } else if (detail.gameKey === 'mines') {
+      onUpdate({ minesImage: detail.imageUrl });
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('lionbet-lobby-image-updated', handleLocalEvent);
+  }
+
   try {
     unsubBalloon = onSnapshot(
       doc(db, 'lionbet_cloud', 'lobby_image_balloon_crash'),
       (snap) => {
         if (snap.exists()) {
           const url = snap.data()?.imageUrl;
-          if (url && String(url).startsWith('data:image/')) {
+          if (isCustomUploadedImage(url)) {
             try {
-              localStorage.setItem('balloon_crash_custom_lobby_image', String(url));
+              localStorage.setItem('balloon_crash_custom_lobby_image', url);
             } catch {}
-            onUpdate({ balloonCrashImage: String(url) });
+            onUpdate({ balloonCrashImage: url });
           }
         }
       },
@@ -2670,11 +2746,11 @@ export function subscribeLobbyImagesFromCloud(
       (snap) => {
         if (snap.exists()) {
           const url = snap.data()?.imageUrl;
-          if (url && String(url).startsWith('data:image/')) {
+          if (isCustomUploadedImage(url)) {
             try {
-              localStorage.setItem('mines_custom_lobby_image', String(url));
+              localStorage.setItem('mines_custom_lobby_image', url);
             } catch {}
-            onUpdate({ minesImage: String(url) });
+            onUpdate({ minesImage: url });
           }
         }
       },
@@ -2683,10 +2759,14 @@ export function subscribeLobbyImagesFromCloud(
   } catch {}
 
   return () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('lionbet-lobby-image-updated', handleLocalEvent);
+    }
     try {
       unsubBalloon?.();
       unsubMines?.();
     } catch {}
   };
 }
+
 

@@ -141,19 +141,28 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   );
   const [customBalloonImage, setCustomBalloonImage] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('balloon_crash_custom_lobby_image');
+      const saved = localStorage.getItem('balloon_crash_custom_lobby_image');
+      if (saved && !saved.startsWith('data:image/svg+xml;utf8,')) return saved;
+      return null;
     } catch {
       return null;
     }
   });
   const [customMinesImage, setCustomMinesImage] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('mines_custom_lobby_image');
+      const saved = localStorage.getItem('mines_custom_lobby_image');
+      if (saved && !saved.startsWith('data:image/svg+xml;utf8,')) return saved;
+      return null;
     } catch {
       return null;
     }
   });
   const [cloudImageSyncNotice, setCloudImageSyncNotice] = useState<string | null>(null);
+  const [isUploadingBalloon, setIsUploadingBalloon] = useState(false);
+  const [isUploadingMines, setIsUploadingMines] = useState(false);
+  const [showImageManagerModal, setShowImageManagerModal] = useState(false);
+  const [balloonUrlInput, setBalloonUrlInput] = useState('');
+  const [minesUrlInput, setMinesUrlInput] = useState('');
 
   // Sync custom Balloon Crash & Mines lobby images from Firebase Cloud Firestore & Server
   useEffect(() => {
@@ -162,15 +171,9 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       if (!active) return;
       if (balloonCrashImage) {
         setCustomBalloonImage(balloonCrashImage);
-      } else {
-        // Seed default embedded Balloon Crash cover to Cloud Firestore so external/Vercel clients have it
-        saveLobbyImageToCloud('balloon_crash', BALLOON_CRASH_LOGO_URL).catch(() => {});
       }
       if (minesImage) {
         setCustomMinesImage(minesImage);
-      } else {
-        // Seed default embedded Mines cover to Cloud Firestore so external/Vercel clients have it
-        saveLobbyImageToCloud('mines', LANKA_MINES_COVER_URL).catch(() => {});
       }
     });
 
@@ -187,27 +190,85 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   }, []);
 
   const handleUploadBalloonLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
     if (!file) return;
+    setIsUploadingBalloon(true);
     try {
-      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.86);
+      // Instant 1ms preview using Object URL while compression & cloud upload run
+      try {
+        const instantPreview = URL.createObjectURL(file);
+        setCustomBalloonImage(instantPreview);
+      } catch {}
+
+      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.85);
       setCustomBalloonImage(dataUrl);
       await saveLobbyImageToCloud('balloon_crash', dataUrl);
-      setCloudImageSyncNotice('✅ Balloon Crash Lobby Image saved to Cloud & synced for Vercel!');
+      setCloudImageSyncNotice('✅ Balloon Crash Lobby Image added & synced to Cloud!');
       setTimeout(() => setCloudImageSyncNotice(null), 5000);
-    } catch {}
+    } catch {
+      setCloudImageSyncNotice('⚠️ Failed to read image file. Please try another JPG/PNG.');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } finally {
+      setIsUploadingBalloon(false);
+      e.target.value = '';
+    }
   };
 
   const handleUploadMinesLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
     if (!file) return;
+    setIsUploadingMines(true);
     try {
-      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.86);
+      // Instant 1ms preview using Object URL while compression & cloud upload run
+      try {
+        const instantPreview = URL.createObjectURL(file);
+        setCustomMinesImage(instantPreview);
+      } catch {}
+
+      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.85);
       setCustomMinesImage(dataUrl);
       await saveLobbyImageToCloud('mines', dataUrl);
-      setCloudImageSyncNotice('✅ Mines Lobby Image saved to Cloud & synced for Vercel!');
+      setCloudImageSyncNotice('✅ Mines Lobby Image added & synced to Cloud!');
       setTimeout(() => setCloudImageSyncNotice(null), 5000);
-    } catch {}
+    } catch {
+      setCloudImageSyncNotice('⚠️ Failed to read image file. Please try another JPG/PNG.');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } finally {
+      setIsUploadingMines(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveBalloonImageUrl = async () => {
+    const clean = balloonUrlInput.trim();
+    if (!clean) return;
+    setIsUploadingBalloon(true);
+    try {
+      setCustomBalloonImage(clean);
+      await saveLobbyImageToCloud('balloon_crash', clean);
+      setBalloonUrlInput('');
+      setCloudImageSyncNotice('✅ Balloon Crash Lobby Image URL saved!');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } finally {
+      setIsUploadingBalloon(false);
+    }
+  };
+
+  const handleSaveMinesImageUrl = async () => {
+    const clean = minesUrlInput.trim();
+    if (!clean) return;
+    setIsUploadingMines(true);
+    try {
+      setCustomMinesImage(clean);
+      await saveLobbyImageToCloud('mines', clean);
+      setMinesUrlInput('');
+      setCloudImageSyncNotice('✅ Mines Lobby Image URL saved!');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } finally {
+      setIsUploadingMines(false);
+    }
   };
 
   // Keep online count steady within each time-of-day period
@@ -344,12 +405,12 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   );
 
   const renderBalloonCrashCard = () => (
-    <div
-      onClick={handleLaunchBalloonCrash}
-      className="group relative rounded-xl overflow-hidden border-2 border-amber-500/80 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 cursor-pointer flex flex-col justify-between"
-    >
+    <div className="group relative rounded-xl overflow-hidden border-2 border-amber-500/80 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 flex flex-col justify-between">
       {/* Classic Balloon Crash Lobby Cover Image */}
-      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#05030a] flex items-center justify-center">
+      <div
+        onClick={handleLaunchBalloonCrash}
+        className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#05030a] flex items-center justify-center cursor-pointer"
+      >
         <img
           src={BALLOON_CRASH_LOGO}
           alt="Balloon Crash Lobby Cover"
@@ -383,7 +444,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         </div>
       </div>
 
-      {/* Classic Card Footer */}
+      {/* Classic Card Footer (isolated from game launch click so Add Image works 100%) */}
       <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-1">
           <div className="min-w-0">
@@ -394,29 +455,25 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               Crash Game • LKR
             </span>
           </div>
-          {currentUser.role === 'admin' && (
-            <label
+          <label
+            onClick={(e) => e.stopPropagation()}
+            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
+            title="Upload Custom Balloon Crash Lobby Image"
+          >
+            {isUploadingBalloon ? '⏳ Saving...' : '📷 Add Image'}
+            <input
+              type="file"
+              accept="image/*"
               onClick={(e) => e.stopPropagation()}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300 text-[9px] font-bold cursor-pointer shrink-0 transition"
-              title="Upload Custom Balloon Crash Lobby Image"
-            >
-              📷 Image
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleUploadBalloonLobbyImage}
-                className="hidden"
-              />
-            </label>
-          )}
+              onChange={handleUploadBalloonLobbyImage}
+              className="sr-only"
+            />
+          </label>
         </div>
 
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleLaunchBalloonCrash();
-          }}
+          onClick={handleLaunchBalloonCrash}
           className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
         >
           <Play className="w-3.5 h-3.5 fill-slate-950" />
@@ -427,12 +484,12 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
   );
 
   const renderLankaMinesCard = () => (
-    <div
-      onClick={() => onSelectMines?.()}
-      className="group relative rounded-xl overflow-hidden border-2 border-amber-500/70 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 cursor-pointer flex flex-col justify-between"
-    >
+    <div className="group relative rounded-xl overflow-hidden border-2 border-amber-500/70 hover:border-amber-400 bg-slate-950 shadow-lg shadow-amber-500/10 transition-all duration-200 flex flex-col justify-between">
       {/* Mines Lobby Cover Image */}
-      <div className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#040814] flex flex-col items-center justify-center">
+      <div
+        onClick={() => onSelectMines?.()}
+        className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#040814] flex flex-col items-center justify-center cursor-pointer"
+      >
         <img
           src={MINES_LOGO}
           alt="Mines Lobby Cover"
@@ -466,7 +523,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         </div>
       </div>
 
-      {/* Card Footer */}
+      {/* Card Footer (isolated from game launch click so Add Image works 100%) */}
       <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-1">
           <div className="min-w-0">
@@ -477,29 +534,25 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               Mines &amp; Instant • LKR
             </span>
           </div>
-          {currentUser.role === 'admin' && (
-            <label
+          <label
+            onClick={(e) => e.stopPropagation()}
+            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-300 text-[9.5px] font-bold cursor-pointer shrink-0 transition shadow-sm"
+            title="Upload Custom Mines Lobby Image"
+          >
+            {isUploadingMines ? '⏳ Saving...' : '📷 Add Image'}
+            <input
+              type="file"
+              accept="image/*"
               onClick={(e) => e.stopPropagation()}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300 text-[9px] font-bold cursor-pointer shrink-0 transition"
-              title="Upload Custom Mines Lobby Image"
-            >
-              📷 Image
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleUploadMinesLobbyImage}
-                className="hidden"
-              />
-            </label>
-          )}
+              onChange={handleUploadMinesLobbyImage}
+              className="sr-only"
+            />
+          </label>
         </div>
 
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectMines?.();
-          }}
+          onClick={() => onSelectMines?.()}
           className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
         >
           <Play className="w-3.5 h-3.5 fill-slate-950" />
@@ -645,6 +698,128 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         </div>
       )}
 
+      {showImageManagerModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowImageManagerModal(false)}
+        >
+          <div
+            className="bg-slate-900 border border-amber-500/60 rounded-2xl p-4 sm:p-6 w-full max-w-2xl shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-white">
+                  🖼️ Add / Update Game Lobby Images
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Upload from your device or paste an image link — syncs across all devices &amp; Vercel
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowImageManagerModal(false)}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Balloon Crash Image Uploader Box */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                    Balloon Crash Lobby Image
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-semibold">3:4 Cover</span>
+                </div>
+
+                <div className="w-full aspect-[3/4] max-h-56 mx-auto rounded-lg overflow-hidden border border-amber-500/40 bg-[#05030a] flex items-center justify-center">
+                  <img
+                    src={BALLOON_CRASH_LOGO}
+                    alt="Balloon Crash Preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+
+                <label className="w-full py-2.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs text-center cursor-pointer transition shadow">
+                  {isUploadingBalloon ? '⏳ Uploading & Saving...' : '📁 Choose Balloon Crash Image (Gallery / PC)'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleUploadBalloonLobbyImage}
+                    className="sr-only"
+                  />
+                </label>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={balloonUrlInput}
+                    onChange={(e) => setBalloonUrlInput(e.target.value)}
+                    placeholder="Or paste Image URL (https://...)"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveBalloonImageUrl}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    Save URL
+                  </button>
+                </div>
+              </div>
+
+              {/* Mines Image Uploader Box */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                    Mines Lobby Image
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-semibold">3:4 Cover</span>
+                </div>
+
+                <div className="w-full aspect-[3/4] max-h-56 mx-auto rounded-lg overflow-hidden border border-amber-500/40 bg-[#040814] flex items-center justify-center">
+                  <img
+                    src={MINES_LOGO}
+                    alt="Mines Preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+
+                <label className="w-full py-2.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs text-center cursor-pointer transition shadow">
+                  {isUploadingMines ? '⏳ Uploading & Saving...' : '📁 Choose Mines Image (Gallery / PC)'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleUploadMinesLobbyImage}
+                    className="sr-only"
+                  />
+                </label>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={minesUrlInput}
+                    onChange={(e) => setMinesUrlInput(e.target.value)}
+                    placeholder="Or paste Image URL (https://...)"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveMinesImageUrl}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    Save URL
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cloudImageSyncNotice && (
         <div className="bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg">
           <span>{cloudImageSyncNotice}</span>
@@ -709,6 +884,15 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
             className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs sm:text-sm transition cursor-pointer"
           >
             Withdraw
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowImageManagerModal(true)}
+            className="px-3 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-bold text-xs sm:text-sm transition border border-amber-500/50 flex items-center gap-1.5 cursor-pointer"
+            title="Add or Change Game Lobby Images"
+          >
+            <span>🖼️ Add Images</span>
           </button>
 
           {onOpenProfile && (

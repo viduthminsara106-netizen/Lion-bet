@@ -2462,3 +2462,231 @@ export function getLeaderboard(): LeaderboardEntry[] {
     },
   ];
 }
+
+/**
+ * Compresses & resizes an uploaded image file to a crisp high-DPI JPEG Data URL (< 150KB)
+ * so it can be stored reliably in Firebase Cloud Firestore (< 1MB limit) and synced to Vercel & all devices.
+ */
+export function compressImageFileToDataUrl(
+  file: File,
+  maxWidth = 600,
+  maxHeight = 800,
+  quality = 0.86
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = () => {
+      const rawDataUrl = String(reader.result || '');
+      if (!rawDataUrl.startsWith('data:image/')) {
+        reject(new Error('Invalid image file'));
+        return;
+      }
+      // If it's an SVG or already small (< 180KB), keep as-is
+      if (rawDataUrl.startsWith('data:image/svg') || rawDataUrl.length < 180000) {
+        resolve(rawDataUrl);
+        return;
+      }
+      const img = new Image();
+      img.onerror = () => resolve(rawDataUrl);
+      img.onload = () => {
+        try {
+          let w = img.naturalWidth || img.width || maxWidth;
+          let h = img.naturalHeight || img.height || maxHeight;
+          const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
+          w = Math.max(1, Math.round(w * ratio));
+          h = Math.max(1, Math.round(h * ratio));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(rawDataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressed);
+        } catch {
+          resolve(rawDataUrl);
+        }
+      };
+      img.src = rawDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Saves a custom lobby image ('balloon_crash' or 'mines') to localStorage, Express API,
+ * AND Firebase Cloud Firestore (`lionbet_cloud/lobby_image_balloon_crash` or `lobby_image_mines`)
+ * so that Vercel deployments and all mobile/desktop devices receive it immediately.
+ */
+export async function saveLobbyImageToCloud(
+  gameKey: 'balloon_crash' | 'mines',
+  dataUrl: string
+): Promise<void> {
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return;
+  const localKey =
+    gameKey === 'balloon_crash'
+      ? 'balloon_crash_custom_lobby_image'
+      : 'mines_custom_lobby_image';
+  const docId =
+    gameKey === 'balloon_crash'
+      ? 'lobby_image_balloon_crash'
+      : 'lobby_image_mines';
+  const apiPath =
+    gameKey === 'balloon_crash'
+      ? '/api/lobby-image/balloon-crash'
+      : '/api/lobby-image/mines';
+  const now = Date.now();
+
+  try {
+    localStorage.setItem(localKey, dataUrl);
+  } catch {}
+
+  await Promise.all([
+    setDoc(doc(db, 'lionbet_cloud', docId), {
+      imageUrl: dataUrl,
+      updatedAt: now,
+    }).catch(() => {}),
+    FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+      ? fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/${docId}?key=${FIRESTORE_API_KEY}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              imageUrl: { stringValue: dataUrl },
+              updatedAt: { integerValue: String(now) },
+            },
+          }),
+        }).catch(() => {})
+      : Promise.resolve(),
+    fetch(apiPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl: dataUrl }),
+    }).catch(() => {}),
+  ]);
+}
+
+/**
+ * Fetches custom lobby images from Firebase Cloud Firestore (works on Vercel static sites!)
+ * as well as local API fallback.
+ */
+export async function fetchLobbyImagesFromCloud(): Promise<{
+  balloonCrashImage: string | null;
+  minesImage: string | null;
+}> {
+  let balloonCrashImage: string | null = null;
+  let minesImage: string | null = null;
+
+  try {
+    const [bcSdk, mSdk, bcRest, mRest, bcApi, mApi] = await Promise.all([
+      getDoc(doc(db, 'lionbet_cloud', 'lobby_image_balloon_crash')).catch(() => null),
+      getDoc(doc(db, 'lionbet_cloud', 'lobby_image_mines')).catch(() => null),
+      FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+        ? fetch(
+            `${FIRESTORE_BASE_URL}/lionbet_cloud/lobby_image_balloon_crash?key=${FIRESTORE_API_KEY}`
+          )
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+        : Promise.resolve(null),
+      FIRESTORE_BASE_URL && FIRESTORE_API_KEY
+        ? fetch(
+            `${FIRESTORE_BASE_URL}/lionbet_cloud/lobby_image_mines?key=${FIRESTORE_API_KEY}`
+          )
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+        : Promise.resolve(null),
+      fetch('/api/lobby-image/balloon-crash')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      fetch('/api/lobby-image/mines')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+    ]);
+
+    const bcCandidate =
+      (bcSdk && bcSdk.exists() ? bcSdk.data()?.imageUrl : null) ||
+      bcRest?.fields?.imageUrl?.stringValue ||
+      bcApi?.imageUrl ||
+      null;
+
+    const mCandidate =
+      (mSdk && mSdk.exists() ? mSdk.data()?.imageUrl : null) ||
+      mRest?.fields?.imageUrl?.stringValue ||
+      mApi?.imageUrl ||
+      null;
+
+    if (bcCandidate && String(bcCandidate).startsWith('data:image/')) {
+      balloonCrashImage = String(bcCandidate);
+      try {
+        localStorage.setItem('balloon_crash_custom_lobby_image', balloonCrashImage);
+      } catch {}
+    }
+
+    if (mCandidate && String(mCandidate).startsWith('data:image/')) {
+      minesImage = String(mCandidate);
+      try {
+        localStorage.setItem('mines_custom_lobby_image', minesImage);
+      } catch {}
+    }
+  } catch {}
+
+  return { balloonCrashImage, minesImage };
+}
+
+/**
+ * Real-time Cloud Firestore listener for custom lobby images across Vercel and AI Studio.
+ */
+export function subscribeLobbyImagesFromCloud(
+  onUpdate: (data: { balloonCrashImage?: string | null; minesImage?: string | null }) => void
+): () => void {
+  let unsubBalloon: (() => void) | null = null;
+  let unsubMines: (() => void) | null = null;
+
+  try {
+    unsubBalloon = onSnapshot(
+      doc(db, 'lionbet_cloud', 'lobby_image_balloon_crash'),
+      (snap) => {
+        if (snap.exists()) {
+          const url = snap.data()?.imageUrl;
+          if (url && String(url).startsWith('data:image/')) {
+            try {
+              localStorage.setItem('balloon_crash_custom_lobby_image', String(url));
+            } catch {}
+            onUpdate({ balloonCrashImage: String(url) });
+          }
+        }
+      },
+      () => {}
+    );
+  } catch {}
+
+  try {
+    unsubMines = onSnapshot(
+      doc(db, 'lionbet_cloud', 'lobby_image_mines'),
+      (snap) => {
+        if (snap.exists()) {
+          const url = snap.data()?.imageUrl;
+          if (url && String(url).startsWith('data:image/')) {
+            try {
+              localStorage.setItem('mines_custom_lobby_image', String(url));
+            } catch {}
+            onUpdate({ minesImage: String(url) });
+          }
+        }
+      },
+      () => {}
+    );
+  } catch {}
+
+  return () => {
+    try {
+      unsubBalloon?.();
+      unsubMines?.();
+    } catch {}
+  };
+}
+

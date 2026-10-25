@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types/game';
-import { getTimeBasedCrashCrowd } from '../services/storage';
+import {
+  getTimeBasedCrashCrowd,
+  compressImageFileToDataUrl,
+  saveLobbyImageToCloud,
+  fetchLobbyImagesFromCloud,
+  subscribeLobbyImagesFromCloud,
+} from '../services/storage';
 import {
   LION_BET_LOGO_URL,
   BALLOON_CRASH_LOGO_URL,
@@ -147,74 +153,61 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
       return null;
     }
   });
+  const [cloudImageSyncNotice, setCloudImageSyncNotice] = useState<string | null>(null);
 
-  // Sync custom Balloon Crash & Mines lobby images from server
+  // Sync custom Balloon Crash & Mines lobby images from Firebase Cloud Firestore & Server
   useEffect(() => {
-    fetch('/api/lobby-image/balloon-crash')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.ok && data.imageUrl) {
-          setCustomBalloonImage(data.imageUrl);
-          try {
-            localStorage.setItem('balloon_crash_custom_lobby_image', data.imageUrl);
-          } catch {}
-        }
-      })
-      .catch(() => {});
+    let active = true;
+    fetchLobbyImagesFromCloud().then(({ balloonCrashImage, minesImage }) => {
+      if (!active) return;
+      if (balloonCrashImage) {
+        setCustomBalloonImage(balloonCrashImage);
+      } else {
+        // Seed default embedded Balloon Crash cover to Cloud Firestore so external/Vercel clients have it
+        saveLobbyImageToCloud('balloon_crash', BALLOON_CRASH_LOGO_URL).catch(() => {});
+      }
+      if (minesImage) {
+        setCustomMinesImage(minesImage);
+      } else {
+        // Seed default embedded Mines cover to Cloud Firestore so external/Vercel clients have it
+        saveLobbyImageToCloud('mines', LANKA_MINES_COVER_URL).catch(() => {});
+      }
+    });
 
-    fetch('/api/lobby-image/mines')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.ok && data.imageUrl) {
-          setCustomMinesImage(data.imageUrl);
-          try {
-            localStorage.setItem('mines_custom_lobby_image', data.imageUrl);
-          } catch {}
-        }
-      })
-      .catch(() => {});
+    const unsub = subscribeLobbyImagesFromCloud(({ balloonCrashImage, minesImage }) => {
+      if (!active) return;
+      if (balloonCrashImage) setCustomBalloonImage(balloonCrashImage);
+      if (minesImage) setCustomMinesImage(minesImage);
+    });
+
+    return () => {
+      active = false;
+      unsub();
+    };
   }, []);
 
-  const handleUploadBalloonLobbyImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadBalloonLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const dataUrl = String(reader.result || '');
-      if (dataUrl.startsWith('data:image/')) {
-        setCustomBalloonImage(dataUrl);
-        try {
-          localStorage.setItem('balloon_crash_custom_lobby_image', dataUrl);
-        } catch {}
-        fetch('/api/lobby-image/balloon-crash', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageDataUrl: dataUrl }),
-        }).catch(() => {});
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.86);
+      setCustomBalloonImage(dataUrl);
+      await saveLobbyImageToCloud('balloon_crash', dataUrl);
+      setCloudImageSyncNotice('✅ Balloon Crash Lobby Image saved to Cloud & synced for Vercel!');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } catch {}
   };
 
-  const handleUploadMinesLobbyImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadMinesLobbyImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const dataUrl = String(reader.result || '');
-      if (dataUrl.startsWith('data:image/')) {
-        setCustomMinesImage(dataUrl);
-        try {
-          localStorage.setItem('mines_custom_lobby_image', dataUrl);
-        } catch {}
-        fetch('/api/lobby-image/mines', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageDataUrl: dataUrl }),
-        }).catch(() => {});
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 600, 800, 0.86);
+      setCustomMinesImage(dataUrl);
+      await saveLobbyImageToCloud('mines', dataUrl);
+      setCloudImageSyncNotice('✅ Mines Lobby Image saved to Cloud & synced for Vercel!');
+      setTimeout(() => setCloudImageSyncNotice(null), 5000);
+    } catch {}
   };
 
   // Keep online count steady within each time-of-day period
@@ -649,6 +642,19 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {cloudImageSyncNotice && (
+        <div className="bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg">
+          <span>{cloudImageSyncNotice}</span>
+          <button
+            type="button"
+            onClick={() => setCloudImageSyncNotice(null)}
+            className="text-emerald-200 hover:text-white text-[11px] font-bold ml-3 cursor-pointer"
+          >
+            ✕
+          </button>
         </div>
       )}
 

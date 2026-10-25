@@ -758,13 +758,32 @@ async function startServer() {
     res.json({ ok: true, settings: serverAdminSettings });
   });
 
-  // Persistent Balloon Crash Lobby Image Upload & Retrieval (syncs across all devices)
-  app.get('/api/lobby-image/balloon-crash', (_req, res) => {
-    const customImage = serverAdminSettings?.balloonCrashLobbyImage || null;
+  // Persistent Balloon Crash Lobby Image Upload & Retrieval (syncs across all devices & Vercel via Cloud Firestore)
+  app.get('/api/lobby-image/balloon-crash', async (_req, res) => {
+    let customImage = serverAdminSettings?.balloonCrashLobbyImage || null;
+    if (!customImage && fbConfig) {
+      try {
+        const cloudRes = await fetch(
+          `${fbConfig.baseUrl}/lionbet_cloud/lobby_image_balloon_crash?key=${fbConfig.apiKey}`
+        );
+        if (cloudRes.ok) {
+          const data = await cloudRes.json();
+          const cloudImg = data?.fields?.imageUrl?.stringValue;
+          if (cloudImg && String(cloudImg).startsWith('data:image/')) {
+            customImage = String(cloudImg);
+            serverAdminSettings = {
+              ...(serverAdminSettings || {}),
+              balloonCrashLobbyImage: customImage,
+            };
+            saveServerAdminSettings(serverAdminSettings);
+          }
+        }
+      } catch {}
+    }
     res.json({ ok: true, imageUrl: customImage });
   });
 
-  app.post('/api/lobby-image/balloon-crash', (req, res) => {
+  app.post('/api/lobby-image/balloon-crash', async (req, res) => {
     try {
       const dataUrl = String(req.body?.imageDataUrl || '').trim();
       if (!dataUrl || !dataUrl.startsWith('data:image/')) {
@@ -787,19 +806,53 @@ async function startServer() {
         balloonCrashLobbyImageFileUrl: savedUrl,
       };
       saveServerAdminSettings(serverAdminSettings);
+      if (fbConfig) {
+        await fetch(
+          `${fbConfig.baseUrl}/lionbet_cloud/lobby_image_balloon_crash?key=${fbConfig.apiKey}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: {
+                imageUrl: { stringValue: dataUrl },
+                updatedAt: { integerValue: String(Date.now()) },
+              },
+            }),
+          }
+        ).catch(() => {});
+      }
       return res.json({ ok: true, imageUrl: dataUrl, fileUrl: savedUrl });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to save image' });
     }
   });
 
-  // Persistent Mines Lobby Image Upload & Retrieval (syncs across all devices)
-  app.get('/api/lobby-image/mines', (_req, res) => {
-    const customImage = serverAdminSettings?.minesLobbyImage || null;
+  // Persistent Mines Lobby Image Upload & Retrieval (syncs across all devices & Vercel via Cloud Firestore)
+  app.get('/api/lobby-image/mines', async (_req, res) => {
+    let customImage = serverAdminSettings?.minesLobbyImage || null;
+    if (!customImage && fbConfig) {
+      try {
+        const cloudRes = await fetch(
+          `${fbConfig.baseUrl}/lionbet_cloud/lobby_image_mines?key=${fbConfig.apiKey}`
+        );
+        if (cloudRes.ok) {
+          const data = await cloudRes.json();
+          const cloudImg = data?.fields?.imageUrl?.stringValue;
+          if (cloudImg && String(cloudImg).startsWith('data:image/')) {
+            customImage = String(cloudImg);
+            serverAdminSettings = {
+              ...(serverAdminSettings || {}),
+              minesLobbyImage: customImage,
+            };
+            saveServerAdminSettings(serverAdminSettings);
+          }
+        }
+      } catch {}
+    }
     res.json({ ok: true, imageUrl: customImage });
   });
 
-  app.post('/api/lobby-image/mines', (req, res) => {
+  app.post('/api/lobby-image/mines', async (req, res) => {
     try {
       const dataUrl = String(req.body?.imageDataUrl || '').trim();
       if (!dataUrl || !dataUrl.startsWith('data:image/')) {
@@ -822,6 +875,21 @@ async function startServer() {
         minesLobbyImageFileUrl: savedUrl,
       };
       saveServerAdminSettings(serverAdminSettings);
+      if (fbConfig) {
+        await fetch(
+          `${fbConfig.baseUrl}/lionbet_cloud/lobby_image_mines?key=${fbConfig.apiKey}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: {
+                imageUrl: { stringValue: dataUrl },
+                updatedAt: { integerValue: String(Date.now()) },
+              },
+            }),
+          }
+        ).catch(() => {});
+      }
       return res.json({ ok: true, imageUrl: dataUrl, fileUrl: savedUrl });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || 'Failed to save image' });

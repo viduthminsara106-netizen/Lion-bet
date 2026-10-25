@@ -1,6 +1,7 @@
-// High-definition embedded SVG Data URI assets for Lion Bet Official Logo & All Casino Game Covers.
-// Embedded directly in the bundle so they load instantaneously on every device (PC, mobile, ais-dev, ais-pre)
+// High-definition embedded SVG & Base64 Data URI assets for Lion Bet Official Logo & All Casino Game Covers.
+// Embedded directly in the bundle so they load instantaneously on every device (PC, mobile, Vercel, ais-dev, ais-pre)
 // with zero broken links or external host dependencies.
+import { LION_BET_UPLOADED_LOGO_DATA_URI } from './brandLogoData';
 
 function svgToDataUri(svgString: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svgString.trim())}`;
@@ -1006,12 +1007,8 @@ const WORLD_SPORTS_COVER_SVG = `
 </svg>
 `;
 
-export const LION_BET_LOGO_RAW_PATH = '/assets/aistudio/IMG-20261023-WA0018_03da72c5.jpg';
-export const LION_BET_LOGO_URL = '/assets/aistudio/IMG-20261023-WA0018_03da72c5.jpg?v=lionbet2026';
-
-if (typeof window !== 'undefined' && typeof fetch === 'function') {
-  fetch(LION_BET_LOGO_RAW_PATH, { cache: 'reload' }).catch(() => {});
-}
+export const LION_BET_LOGO_RAW_PATH = LION_BET_UPLOADED_LOGO_DATA_URI;
+export const LION_BET_LOGO_URL = LION_BET_UPLOADED_LOGO_DATA_URI;
 
 export const BALLOON_CRASH_LOGO_URL = svgToDataUri(BALLOON_CRASH_COVER_SVG);
 export const BALLOON_CRASH_BG_URL = svgToDataUri(BALLOON_CRASH_BG_SVG);

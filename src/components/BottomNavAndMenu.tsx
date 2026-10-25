@@ -90,11 +90,11 @@ export const LionBetSiteLoader: React.FC<{ onFinished: () => void }> = ({ onFini
     <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6 select-none">
       <div className="relative flex flex-col items-center max-w-xs w-full text-center">
         {/* Logo Emblem */}
-        <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-slate-900 border-2 border-amber-500/70 p-1.5 shadow-2xl mb-5 overflow-hidden">
+        <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-[#050505] border-2 border-amber-500/70 p-1 shadow-2xl mb-5 overflow-hidden flex items-center justify-center">
           <img
             src={LION_BET_LOGO_URL}
             alt="Lion Bet"
-            className="w-full h-full object-cover rounded-2xl"
+            className="w-full h-full object-contain rounded-xl"
           />
         </div>
 
@@ -152,37 +152,37 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   return (
     <nav
       aria-label="Primary bottom navigation"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 px-2 py-1.5 shadow-2xl"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900 border-t border-slate-800 px-2 py-1.5 shadow-xl"
     >
       <div className="max-w-3xl mx-auto grid grid-cols-4 gap-1.5">
         {/* 1. Home Tab */}
         <button
           type="button"
           onClick={onSelectHome}
-          className={`flex flex-col items-center justify-center py-2 px-2 rounded-xl transition cursor-pointer ${
+          className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-lg transition cursor-pointer border ${
             activePage === 'lobby' && !isMenuOpen
-              ? 'bg-amber-500/15 text-amber-400 font-black'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              ? 'bg-slate-950 text-amber-400 border-amber-500/40 font-bold'
+              : 'text-slate-400 border-transparent hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Home className="w-5 h-5 mb-0.5" />
-          <span className="text-[11px] tracking-tight">Home</span>
+          <Home className="w-4 h-4 mb-0.5" />
+          <span className="text-[11px] tracking-tight">Lobby</span>
         </button>
 
         {/* 2. Bet Slip Tab */}
         <button
           type="button"
           onClick={onSelectBetSlip}
-          className={`relative flex flex-col items-center justify-center py-2 px-2 rounded-xl transition cursor-pointer ${
+          className={`relative flex flex-col items-center justify-center py-1.5 px-2 rounded-lg transition cursor-pointer border ${
             activePage === 'sports' && !isMenuOpen
-              ? 'bg-amber-500/15 text-amber-400 font-black'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              ? 'bg-slate-950 text-amber-400 border-amber-500/40 font-bold'
+              : 'text-slate-400 border-transparent hover:text-white hover:bg-slate-800'
           }`}
         >
           <div className="relative">
-            <Ticket className="w-5 h-5 mb-0.5" />
+            <Ticket className="w-4 h-4 mb-0.5" />
             {activeSlipsCount > 0 && (
-              <span className="absolute -top-1.5 -right-3 px-1.5 py-0.2 rounded-full bg-emerald-500 text-slate-950 font-mono text-[9px] font-black">
+              <span className="absolute -top-1.5 -right-3 px-1.5 py-0.2 rounded bg-emerald-600 text-white font-mono text-[9px] font-bold">
                 {activeSlipsCount}
               </span>
             )}
@@ -194,9 +194,9 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
         <button
           type="button"
           onClick={onSelectDeposit}
-          className="flex flex-col items-center justify-center py-2 px-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 font-black transition cursor-pointer border border-emerald-500/30"
+          className="flex flex-col items-center justify-center py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition cursor-pointer"
         >
-          <Wallet className="w-5 h-5 mb-0.5 text-emerald-400" />
+          <Wallet className="w-4 h-4 mb-0.5 text-white" />
           <span className="text-[11px] tracking-tight">Deposit</span>
         </button>
 
@@ -204,13 +204,13 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
         <button
           type="button"
           onClick={onToggleMenu}
-          className={`flex flex-col items-center justify-center py-2 px-2 rounded-xl transition cursor-pointer ${
+          className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-lg transition cursor-pointer border ${
             isMenuOpen
-              ? 'bg-amber-500 text-slate-950 font-black'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold'
+              : 'text-slate-400 border-transparent hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Menu className="w-5 h-5 mb-0.5" />
+          <Menu className="w-4 h-4 mb-0.5" />
           <span className="text-[11px] tracking-tight">Menu</span>
         </button>
       </div>
@@ -473,11 +473,11 @@ export const SiteMenuModal: React.FC<SiteMenuModalProps> = ({
                 <ArrowLeft className="w-4 h-4" />
               </button>
             ) : (
-              <div className="w-10 h-10 rounded-xl bg-slate-900 border border-amber-500/50 overflow-hidden shrink-0">
+              <div className="w-11 h-11 rounded-xl bg-[#050505] border border-amber-500/70 overflow-hidden shrink-0 flex items-center justify-center">
                 <img
                   src={LION_BET_LOGO_URL}
                   alt="Lion Bet"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               </div>
             )}

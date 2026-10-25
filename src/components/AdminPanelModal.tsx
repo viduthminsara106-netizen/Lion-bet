@@ -586,11 +586,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 py-3 sm:py-4 border-b border-slate-800 bg-slate-950/80">
           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-slate-950 border border-amber-500/60 overflow-hidden shrink-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-[#050505] border border-amber-500/70 overflow-hidden shrink-0 flex items-center justify-center">
               <img
                 src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
             <div className="min-w-0">

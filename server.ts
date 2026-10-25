@@ -1299,15 +1299,27 @@ Write ONLY ${botName}'s fresh, non-repeating reply text (no quotes or name prefi
     }
   });
 
-  // Serve fallback SVG artwork for any legacy /assets/aistudio/* requests
+  // Serve real uploaded files from public/assets/aistudio first, fallback to SVG only if missing
   app.get('/assets/aistudio/:filename', async (req, res) => {
     try {
+      const name = path.basename(String(req.params.filename || ''));
+      const publicFilePath = path.join(__dirname, 'public', 'assets', 'aistudio', name);
+      const distFilePath = path.join(__dirname, 'dist', 'assets', 'aistudio', name);
+
+      if (fs.existsSync(publicFilePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return res.sendFile(publicFilePath);
+      }
+      if (fs.existsSync(distFilePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return res.sendFile(distFilePath);
+      }
+
       const { LION_BET_LOGO_SVG, BALLOON_CRASH_COVER_SVG, BALLOON_CRASH_BG_SVG } = await import(
         './src/services/brandAssets'
       );
-      const name = String(req.params.filename || '');
       res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Cache-Control', 'no-cache');
       if (name.includes('d88c81fa')) {
         return res.send(BALLOON_CRASH_COVER_SVG.trim());
       }

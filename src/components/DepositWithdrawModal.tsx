@@ -410,11 +410,11 @@ export const DepositWithdrawModal: React.FC<DepositWithdrawModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/75">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-slate-950 border border-amber-500/60 overflow-hidden shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-[#050505] border border-amber-500/70 overflow-hidden shrink-0 flex items-center justify-center">
               <img
                 src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
             <div>

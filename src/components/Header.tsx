@@ -78,33 +78,34 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
 }) => {
   return (
-    <header className="w-full max-w-full bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-2 sm:px-5 py-2 sm:py-2.5 flex flex-col z-40 sticky top-0 shadow-lg">
-      {/* Lucky Hour Active Header Notification Banner (15-Minute High Multiplier Boost) */}
+    <header className="w-full max-w-full bg-slate-900 border-b border-slate-800 px-2.5 sm:px-5 py-2 sm:py-2.5 flex flex-col z-40 sticky top-0 shadow-md">
+      {/* Lucky Hour Active Header Notification Banner */}
       {isLuckyHourActive && luckyHourRemainingMs > 0 && (
         <div
           role="status"
           aria-live="polite"
           onClick={onOpenNotifications}
-          className="w-full mb-2 px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/20 border border-amber-400/50 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer transition"
+          className="w-full mb-2 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-amber-500/50 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer transition"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <Zap className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
-            <span className="font-black text-amber-300 tracking-wide uppercase">
-              🍀 LUCKY HOUR ACTIVE
+            <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-bold text-amber-400 tracking-wide uppercase">
+              LUCKY HOUR ACTIVE
             </span>
-            <span aria-hidden="true" className="text-amber-500/60 hidden sm:inline">
+            <span aria-hidden="true" className="text-slate-600 hidden sm:inline">
               ·
             </span>
-            <span className="text-slate-200 font-semibold hidden sm:inline truncate">
-              High Crash Multipliers Probability Boosted for 15 Minutes!
+            <span className="text-slate-300 font-medium hidden sm:inline truncate">
+              High Crash Multipliers Probability Boosted for 15 Minutes
             </span>
           </div>
-          <div className="flex items-center gap-1.5 font-mono tabular-nums font-black text-amber-300 shrink-0">
+          <div className="flex items-center gap-1.5 font-mono tabular-nums font-bold text-amber-400 shrink-0">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Ends in {formatLuckyHourTimer(luckyHourRemainingMs)}</span>
+            <span>{formatLuckyHourTimer(luckyHourRemainingMs)}</span>
           </div>
         </div>
       )}
+
       {/* Main Row */}
       <div className="w-full flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
         {/* Brand Logo: Lion Bet Official Logo & Back to Games Lobby */}
@@ -115,25 +116,25 @@ export const Header: React.FC<HeaderProps> = ({
             title="Lion Bet - Go to Games Lobby"
           >
             {/* Lion Bet Official Logo Image */}
-            <div className="relative flex items-center justify-center w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-slate-950 border border-amber-500/60 shadow-md shadow-amber-500/20 select-none shrink-0 group-hover:scale-105 transition overflow-hidden">
+            <div className="relative flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-lg bg-[#050505] border border-amber-500/70 shadow-sm select-none shrink-0 overflow-hidden">
               <img
                 src={LION_BET_LOGO_URL}
                 alt="Lion Bet Logo"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
 
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="font-black text-sm sm:text-lg tracking-wider text-amber-400 truncate">
+                <span className="font-bold text-sm sm:text-base tracking-wider text-amber-400 truncate">
                   LION <span className="text-white">BET</span>
                 </span>
-                <span className="hidden lg:inline-block px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-400 text-[10px] font-black tracking-wider uppercase border border-amber-500/30">
+                <span className="hidden lg:inline-block px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 text-[9px] font-bold tracking-wider uppercase border border-slate-700">
                   OFFICIAL
                 </span>
               </div>
-              <span className="text-[10px] text-amber-300/80 font-semibold tracking-wider hidden sm:block">
-                PLAY • BET • WIN
+              <span className="text-[10px] text-slate-400 font-medium tracking-wider hidden sm:block">
+                CLASSIC CASINO &amp; SPORTS
               </span>
             </div>
           </div>
@@ -142,8 +143,8 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onGoToLobby}
-              className="ml-0.5 flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs sm:text-sm font-black transition active:scale-95 cursor-pointer"
-              title="Return to Games Selection Page"
+              className="ml-0.5 flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-bold transition cursor-pointer"
+              title="Return to Games Lobby"
             >
               <Gamepad2 className="w-4 h-4 shrink-0" />
               <span className="hidden xs:inline">Lobby</span>
@@ -154,10 +155,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onOpenSportsBetting}
-              className={`ml-0.5 flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border text-xs sm:text-sm font-black transition active:scale-95 cursor-pointer ${
+              className={`ml-0.5 flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${
                 activePage === 'sports'
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
-                  : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-emerald-500/35'
+                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                  : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-slate-700'
               }`}
               title="Open World Match Betting & Bet Slip"
             >
@@ -172,36 +173,36 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onOpenReferral}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-amber-400 text-xs sm:text-sm font-bold transition border border-amber-500/25 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-semibold transition border border-slate-700 cursor-pointer"
           >
-            <Gift className="w-4 h-4" />
+            <Gift className="w-3.5 h-3.5" />
             <span>Refer (10%)</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenLeaderboard}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 text-xs sm:text-sm font-bold transition border border-slate-700 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition border border-slate-700 cursor-pointer"
           >
-            <Trophy className="w-4 h-4 text-amber-400" />
+            <Trophy className="w-3.5 h-3.5 text-amber-400" />
             <span>Leaders</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenProvablyFair}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-emerald-400 text-xs sm:text-sm font-bold transition border border-emerald-500/25 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold transition border border-slate-700 cursor-pointer"
           >
-            <ShieldCheck className="w-4 h-4" />
+            <ShieldCheck className="w-3.5 h-3.5" />
             <span>Fairness</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenGoogleForms}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-indigo-400 text-xs sm:text-sm font-bold transition border border-indigo-500/25 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition border border-slate-700 cursor-pointer"
           >
-            <FileText className="w-4 h-4" />
+            <FileText className="w-3.5 h-3.5 text-amber-400" />
             <span>Feedback</span>
           </button>
 
@@ -209,27 +210,27 @@ export const Header: React.FC<HeaderProps> = ({
             href="https://whatsapp.com/channel/0029Vb8vhzCHFxOtG2NiJK2w"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-600/20 hover:bg-green-600/30 text-green-400 text-xs sm:text-sm font-bold transition border border-green-500/40 active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold transition border border-slate-700"
             title="Join Official Lion Bet WhatsApp Channel"
           >
-            <MessageCircle className="w-4 h-4" />
+            <MessageCircle className="w-3.5 h-3.5" />
             <span>WA Channel</span>
           </a>
         </div>
 
-        {/* Right Controls: Balance, Deposit, Withdraw, Agent, Admin, Theme, Audio, Profile, Logout */}
+        {/* Right Controls: Balance, Deposit, Withdraw, Admin, Theme, Audio, Profile, Logout */}
         <div className="flex items-center gap-1 sm:gap-1.5 ml-auto shrink-0">
-          {/* LKR Balance Badge */}
+          {/* Classic LKR Balance Badge */}
           <div
             onClick={() => onOpenCashier('deposit')}
-            className="flex items-center bg-slate-950 border border-emerald-500/30 rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 shadow-inner cursor-pointer hover:border-emerald-500/50 transition"
+            className="flex items-center bg-slate-950 border border-slate-700 rounded-lg px-2.5 sm:px-3 py-1 cursor-pointer hover:border-emerald-500/50 transition"
             title="Click to open Lion Bet Cashier"
           >
             <div className="text-right">
               <span className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400 block leading-none">
                 Balance
               </span>
-              <span className="text-xs sm:text-sm font-black text-emerald-400 whitespace-nowrap">
+              <span className="text-xs sm:text-sm font-bold font-mono tabular-nums text-emerald-400 whitespace-nowrap">
                 Rs. {currentUser.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             </div>
@@ -239,7 +240,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => onOpenCashier('deposit')}
-            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs sm:text-sm transition shadow-md shadow-emerald-500/20 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm transition cursor-pointer"
             title="Deposit LKR (1st Deposit +100% Bonus)"
           >
             <ArrowDownCircle className="w-4 h-4 shrink-0" />
@@ -250,10 +251,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => onOpenCashier('withdraw')}
-            className="hidden sm:flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs sm:text-sm transition active:scale-95 cursor-pointer"
+            className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs sm:text-sm transition cursor-pointer"
             title="Withdraw LKR"
           >
-            <ArrowUpCircle className="w-4 h-4" />
+            <ArrowUpCircle className="w-4 h-4 text-amber-400" />
             <span>Withdraw</span>
           </button>
 
@@ -262,7 +263,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onOpenAdmin}
-              className="hidden lg:flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-black transition active:scale-95 cursor-pointer bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-500/30"
+              className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer bg-amber-500 hover:bg-amber-400 text-slate-950"
               title="Open Admin Dashboard"
             >
               <Shield className="w-3.5 h-3.5" />
@@ -276,10 +277,10 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onToggleTheme}
               title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-              className="flex items-center justify-center p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition active:scale-90 cursor-pointer border border-slate-700/70"
+              className="flex items-center justify-center p-1.5 sm:p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer border border-slate-700"
             >
               {theme === 'light' ? (
-                <Moon className="w-4 h-4 text-indigo-400" />
+                <Moon className="w-4 h-4 text-slate-300" />
               ) : (
                 <Sun className="w-4 h-4 text-amber-400" />
               )}
@@ -296,11 +297,11 @@ export const Header: React.FC<HeaderProps> = ({
                   ? `Notifications (${unreadNotificationsCount} unread)`
                   : 'Notification Center'
               }
-              className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 transition active:scale-90 cursor-pointer border border-amber-500/35"
+              className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 transition cursor-pointer border border-slate-700"
             >
               <Bell className="w-4 h-4" />
               {unreadNotificationsCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center shadow border border-slate-950 animate-pulse">
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center border border-slate-950">
                   {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
                 </span>
               )}
@@ -312,7 +313,7 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onToggleMute}
             title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-            className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition active:scale-90 cursor-pointer border border-slate-700/70"
+            className="p-1.5 sm:p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer border border-slate-700"
           >
             {isMuted ? (
               <VolumeX className="w-4 h-4 text-rose-400" />
@@ -325,44 +326,44 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onOpenProfile}
-            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-xs sm:text-sm font-bold text-white transition active:scale-95 cursor-pointer"
+            className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-white transition cursor-pointer"
             title="View & Edit Profile"
           >
-            <UserCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="text-xs sm:text-sm">{currentUser.avatar}</span>
+            <UserCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="text-xs">{currentUser.avatar}</span>
             <span className="max-w-[75px] truncate hidden md:inline">{currentUser.username}</span>
           </button>
 
-          {/* Clearly Visible Logout Button on Right Corner */}
+          {/* Logout Button */}
           <button
             type="button"
             onClick={onLogout}
             title="Logout from Account"
-            className="flex items-center gap-1 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/50 text-xs sm:text-sm font-black shadow-md shadow-rose-600/25 transition active:scale-95 cursor-pointer shrink-0"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition cursor-pointer shrink-0"
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            <span>Logout</span>
+            <span className="hidden sm:inline">Logout</span>
           </button>
         </div>
       </div>
 
       {/* Mobile / Tablet Action Strip */}
-      <div className="flex lg:hidden items-center gap-2 overflow-x-auto no-scrollbar pt-2 mt-2 border-t border-slate-800/80 w-full">
+      <div className="flex lg:hidden items-center gap-2 overflow-x-auto no-scrollbar pt-2 mt-2 border-t border-slate-800 w-full">
         <button
           type="button"
           onClick={() => onOpenCashier('withdraw')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 text-emerald-400 border border-emerald-500/30 text-xs font-bold shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold shrink-0 cursor-pointer"
         >
-          <ArrowUpCircle className="w-3.5 h-3.5" />
+          <ArrowUpCircle className="w-3.5 h-3.5 text-amber-400" />
           <span>Withdraw</span>
         </button>
 
         <button
           type="button"
           onClick={onOpenProfile}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 text-white border border-emerald-500/30 text-xs font-bold shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-white border border-slate-700 text-xs font-semibold shrink-0 cursor-pointer"
         >
-          <UserCircle className="w-3.5 h-3.5 text-emerald-400" />
+          <UserCircle className="w-3.5 h-3.5 text-amber-400" />
           <span>Profile</span>
         </button>
 
@@ -370,7 +371,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onOpenAdmin}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-black shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 cursor-pointer"
           >
             <Shield className="w-3.5 h-3.5" />
             <span>Admin</span>
@@ -380,7 +381,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           type="button"
           onClick={onOpenReferral}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 text-amber-300 border border-amber-500/20 text-xs font-bold shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-amber-400 border border-slate-700 text-xs font-semibold shrink-0 cursor-pointer"
         >
           <Gift className="w-3.5 h-3.5" />
           <span>Refer (10%)</span>
@@ -389,7 +390,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           type="button"
           onClick={onOpenLeaderboard}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 text-slate-200 border border-slate-700 text-xs font-bold shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold shrink-0 cursor-pointer"
         >
           <Trophy className="w-3.5 h-3.5 text-amber-400" />
           <span>Leaders</span>
@@ -398,7 +399,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           type="button"
           onClick={onOpenProvablyFair}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 text-emerald-400 border border-emerald-500/20 text-xs font-bold shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold shrink-0 cursor-pointer"
         >
           <ShieldCheck className="w-3.5 h-3.5" />
           <span>Fairness</span>
@@ -408,16 +409,16 @@ export const Header: React.FC<HeaderProps> = ({
           href="https://whatsapp.com/channel/0029Vb8vhzCHFxOtG2NiJK2w"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-green-600 text-slate-950 text-xs font-black shrink-0"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-600 text-white text-xs font-bold shrink-0"
         >
           <MessageCircle className="w-3.5 h-3.5" />
-          <span>Official WA Channel</span>
+          <span>WA Channel</span>
         </a>
 
         <button
           type="button"
           onClick={onLogout}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 text-white border border-rose-400/50 text-xs font-black shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-600 text-white text-xs font-bold shrink-0 cursor-pointer"
         >
           <LogOut className="w-3.5 h-3.5" />
           <span>Logout</span>

@@ -563,7 +563,13 @@ const WORLD_SPORTS_COVER_SVG = `
 </svg>
 `;
 
-export const LION_BET_LOGO_URL = svgToDataUri(LION_BET_LOGO_SVG);
+export const LION_BET_LOGO_RAW_PATH = '/assets/aistudio/IMG-20261023-WA0018_03da72c5.jpg';
+export const LION_BET_LOGO_URL = '/assets/aistudio/IMG-20261023-WA0018_03da72c5.jpg?v=lionbet2026';
+
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
+  fetch(LION_BET_LOGO_RAW_PATH, { cache: 'reload' }).catch(() => {});
+}
+
 export const BALLOON_CRASH_LOGO_URL = svgToDataUri(BALLOON_CRASH_COVER_SVG);
 export const BALLOON_CRASH_BG_URL = svgToDataUri(BALLOON_CRASH_BG_SVG);
 export const LANKA_MINES_COVER_URL = svgToDataUri(LANKA_MINES_COVER_SVG);

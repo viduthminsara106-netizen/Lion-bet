@@ -1111,7 +1111,7 @@ export default function App() {
   }, [adminSettings, roundNonce, clientSeed]);
 
   // Track activePage in a ref & stop all sounds/timers whenever not inside the game
-  const activePageRef = useRef<'lobby' | 'game' | 'sports'>(activePage);
+  const activePageRef = useRef<'lobby' | 'game' | 'mines' | 'sports'>(activePage);
   const crashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -1900,11 +1900,9 @@ export default function App() {
         <MinesGameView
           currentUser={currentUser}
           adminSettings={adminSettings}
-          isMuted={isMuted}
-          onToggleMute={handleToggleMute}
+          onUpdateAdminSettings={setAdminSettings}
           onBackToLobby={() => setActivePage('lobby')}
           onOpenCashier={handleOpenCashier}
-          onOpenAdmin={() => setIsAdminOpen(true)}
           onPlaceBetDeduction={(betAmount) => {
             const latest = currentUserRef.current;
             if (latest.balance < betAmount) return false;
@@ -1920,7 +1918,7 @@ export default function App() {
             saveUser(finalUpdated);
             return true;
           }}
-          onCreditWin={(winAmount, multiplier) => {
+          onCreditWin={(winAmount, _betAmount, multiplier) => {
             const latest = currentUserRef.current;
             const newBal = Number((latest.balance + winAmount).toFixed(2));
             const updated: User = {

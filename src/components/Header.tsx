@@ -28,7 +28,7 @@ interface HeaderProps {
   isMuted: boolean;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
-  activePage?: 'lobby' | 'game' | 'mines' | 'sports';
+  activePage?: 'lobby' | 'game' | 'mines' | 'jetx' | 'sports';
   onGoToLobby?: () => void;
   onOpenSportsBetting?: () => void;
   onToggleMute: () => void;

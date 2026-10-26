@@ -67,6 +67,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { CashAgentPanelModal } from './components/CashAgentPanelModal';
 import { SportsBettingView } from './components/SportsBettingView';
 import { MinesGameView } from './components/MinesGameView';
+import { JetXGameView } from './components/JetXGameView';
 import {
   LionBetSiteLoader,
   BottomTabBar,
@@ -85,7 +86,7 @@ export default function App() {
   // App States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasActiveAuthSession());
   const [currentUser, setCurrentUserState] = useState<User>(getCurrentUser());
-  const [activePage, setActivePage] = useState<'lobby' | 'game' | 'mines' | 'sports'>('lobby');
+  const [activePage, setActivePage] = useState<'lobby' | 'game' | 'mines' | 'jetx' | 'sports'>('lobby');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('lionbet_theme_mode_v2');
     return saved === 'dark' || saved === 'light' ? saved : 'dark';
@@ -703,9 +704,130 @@ export default function App() {
   // ROUND LIFECYCLE MANAGEMENT
   // ==========================================
 
+  // Track whether current round is controlled by Admin Next Signals / Override
+  const wasForcedByAdminRef = useRef<boolean>(false);
+
+  const peekNextAdminSignal = useCallback((settingsObj?: AdminSettings): number | null => {
+    const s = settingsObj || getAdminSettings();
+    const balloonCfg = s.crashGamesConfig?.balloon_crash;
+    const selectedId = s.selectedCrashGameId || 'balloon_crash';
+    const selectedCfg = s.crashGamesConfig?.[selectedId];
+
+    const overrideCandidate =
+      balloonCfg?.nextCrashOverride !== undefined && balloonCfg?.nextCrashOverride !== null
+        ? balloonCfg.nextCrashOverride
+        : selectedCfg?.nextCrashOverride !== undefined && selectedCfg?.nextCrashOverride !== null
+        ? selectedCfg.nextCrashOverride
+        : s.nextCrashOverride;
+
+    if (typeof overrideCandidate === 'number' && !isNaN(overrideCandidate) && overrideCandidate >= 1.0) {
+      return Number(overrideCandidate.toFixed(2));
+    }
+
+    const queueCandidate =
+      Array.isArray(balloonCfg?.queuedMultipliers) && balloonCfg.queuedMultipliers.length > 0
+        ? balloonCfg.queuedMultipliers
+        : Array.isArray(selectedCfg?.queuedMultipliers) && selectedCfg.queuedMultipliers.length > 0
+        ? selectedCfg.queuedMultipliers
+        : Array.isArray(s.queuedMultipliers) && s.queuedMultipliers.length > 0
+        ? s.queuedMultipliers
+        : [];
+
+    if (queueCandidate.length > 0 && typeof queueCandidate[0] === 'number' && queueCandidate[0] >= 1.0) {
+      return Number(queueCandidate[0].toFixed(2));
+    }
+
+    return null;
+  }, []);
+
+  const consumeNextAdminSignal = useCallback((): number | null => {
+    const latestSettings = getAdminSettings();
+    const balloonCfg = latestSettings.crashGamesConfig?.balloon_crash;
+    const selectedId = latestSettings.selectedCrashGameId || 'balloon_crash';
+    const selectedCfg = latestSettings.crashGamesConfig?.[selectedId];
+
+    const activeOverride =
+      balloonCfg?.nextCrashOverride !== undefined && balloonCfg?.nextCrashOverride !== null
+        ? balloonCfg.nextCrashOverride
+        : selectedCfg?.nextCrashOverride !== undefined && selectedCfg?.nextCrashOverride !== null
+        ? selectedCfg.nextCrashOverride
+        : latestSettings.nextCrashOverride;
+
+    if (typeof activeOverride === 'number' && !isNaN(activeOverride) && activeOverride >= 1.0) {
+      const chosen = Number(activeOverride.toFixed(2));
+      const nextCrashGamesConfig = latestSettings.crashGamesConfig
+        ? { ...latestSettings.crashGamesConfig }
+        : undefined;
+      if (nextCrashGamesConfig) {
+        if (nextCrashGamesConfig.balloon_crash) {
+          nextCrashGamesConfig.balloon_crash = {
+            ...nextCrashGamesConfig.balloon_crash,
+            nextCrashOverride: null,
+          };
+        }
+        if (nextCrashGamesConfig[selectedId]) {
+          nextCrashGamesConfig[selectedId] = {
+            ...nextCrashGamesConfig[selectedId],
+            nextCrashOverride: null,
+          };
+        }
+      }
+      const updatedSettings: AdminSettings = {
+        ...latestSettings,
+        nextCrashOverride: null,
+        crashGamesConfig: nextCrashGamesConfig,
+      };
+      setAdminSettings(updatedSettings);
+      saveAdminSettings(updatedSettings);
+      return chosen;
+    }
+
+    const activeQueue =
+      Array.isArray(balloonCfg?.queuedMultipliers) && balloonCfg.queuedMultipliers.length > 0
+        ? balloonCfg.queuedMultipliers
+        : Array.isArray(selectedCfg?.queuedMultipliers) && selectedCfg.queuedMultipliers.length > 0
+        ? selectedCfg.queuedMultipliers
+        : Array.isArray(latestSettings.queuedMultipliers) && latestSettings.queuedMultipliers.length > 0
+        ? latestSettings.queuedMultipliers
+        : [];
+
+    if (activeQueue.length > 0 && typeof activeQueue[0] === 'number' && activeQueue[0] >= 1.0) {
+      const chosen = Number(activeQueue[0].toFixed(2));
+      const remainingQueue = activeQueue.slice(1);
+      const nextCrashGamesConfig = latestSettings.crashGamesConfig
+        ? { ...latestSettings.crashGamesConfig }
+        : undefined;
+      if (nextCrashGamesConfig) {
+        if (nextCrashGamesConfig.balloon_crash) {
+          nextCrashGamesConfig.balloon_crash = {
+            ...nextCrashGamesConfig.balloon_crash,
+            queuedMultipliers: remainingQueue,
+          };
+        }
+        if (nextCrashGamesConfig[selectedId]) {
+          nextCrashGamesConfig[selectedId] = {
+            ...nextCrashGamesConfig[selectedId],
+            queuedMultipliers: remainingQueue,
+          };
+        }
+      }
+      const updatedSettings: AdminSettings = {
+        ...latestSettings,
+        queuedMultipliers: remainingQueue,
+        crashGamesConfig: nextCrashGamesConfig,
+      };
+      setAdminSettings(updatedSettings);
+      saveAdminSettings(updatedSettings);
+      return chosen;
+    }
+
+    return null;
+  }, []);
+
   // Setup Next Flight
   const prepareNextRound = useCallback(async () => {
-    if (adminSettings.isGamePaused) return;
+    const currentSettings = getAdminSettings();
+    if (currentSettings.isGamePaused) return;
 
     const nextNonce = roundNonce + 1;
     setRoundNonce(nextNonce);
@@ -716,56 +838,20 @@ export default function App() {
     const newHash = await sha256(newServerSeed);
     setServerSeedHash(newHash);
 
-    // Calculate crash multiplier with configurable loss rate, 1.00x instant crash, & Next 30 Multipliers queue
+    // Check if Admin has created Next Signals or Override (peek during WAITING, consume on liftoff)
     const latestSettings = getAdminSettings();
     const balloonCfg = latestSettings.crashGamesConfig?.balloon_crash;
-    const activeOverride =
-      balloonCfg?.nextCrashOverride !== undefined && balloonCfg?.nextCrashOverride !== null
-        ? balloonCfg.nextCrashOverride
-        : latestSettings.nextCrashOverride;
-    const activeQueue = Array.isArray(balloonCfg?.queuedMultipliers)
-      ? balloonCfg.queuedMultipliers
-      : Array.isArray(latestSettings.queuedMultipliers)
-      ? latestSettings.queuedMultipliers
-      : [];
+    const adminSignal = peekNextAdminSignal(latestSettings);
 
     let nextCrash: number;
     let wasForcedByAdmin = false;
 
-    if (activeOverride !== null && activeOverride >= 1.0) {
-      nextCrash = activeOverride;
+    if (adminSignal !== null) {
+      nextCrash = adminSignal;
       wasForcedByAdmin = true;
-      const updatedBalloonCfg = balloonCfg
-        ? { ...balloonCfg, nextCrashOverride: null }
-        : undefined;
-      const updatedSettings: AdminSettings = {
-        ...latestSettings,
-        nextCrashOverride: null,
-        crashGamesConfig:
-          updatedBalloonCfg && latestSettings.crashGamesConfig
-            ? { ...latestSettings.crashGamesConfig, balloon_crash: updatedBalloonCfg }
-            : latestSettings.crashGamesConfig,
-      };
-      setAdminSettings(updatedSettings);
-      saveAdminSettings(updatedSettings);
-    } else if (activeQueue.length > 0 && activeQueue[0] >= 1.0) {
-      nextCrash = activeQueue[0];
-      wasForcedByAdmin = true;
-      const remainingQueue = activeQueue.slice(1);
-      const updatedBalloonCfg = balloonCfg
-        ? { ...balloonCfg, queuedMultipliers: remainingQueue }
-        : undefined;
-      const updatedSettings: AdminSettings = {
-        ...latestSettings,
-        queuedMultipliers: remainingQueue,
-        crashGamesConfig:
-          updatedBalloonCfg && latestSettings.crashGamesConfig
-            ? { ...latestSettings.crashGamesConfig, balloon_crash: updatedBalloonCfg }
-            : latestSettings.crashGamesConfig,
-      };
-      setAdminSettings(updatedSettings);
-      saveAdminSettings(updatedSettings);
+      wasForcedByAdminRef.current = true;
     } else {
+      wasForcedByAdminRef.current = false;
       const isLuckyNow = Boolean(
         luckyHourEndsAtRef.current && luckyHourEndsAtRef.current > Date.now()
       );
@@ -780,6 +866,7 @@ export default function App() {
       );
       nextCrash = calc.crashPoint;
     }
+    crashPointRef.current = nextCrash;
     setCrashPoint(nextCrash);
 
     // Promote queued bets or trigger real Auto-Bet with explicit balance deduction
@@ -872,7 +959,7 @@ export default function App() {
     const isLuckyRound = Boolean(
       luckyHourEndsAtRef.current && luckyHourEndsAtRef.current > Date.now()
     );
-    if (!wasForcedByAdmin && !isLuckyRound) {
+    if (!wasForcedByAdmin && !wasForcedByAdminRef.current && !isLuckyRound) {
       const patternResult = playerPatternTracker.evaluateRoundCrash(
         userActiveTotal,
         curUser.balance,
@@ -880,6 +967,7 @@ export default function App() {
       );
       nextCrash = patternResult.crashPoint;
     }
+    crashPointRef.current = nextCrash;
     setCrashPoint(nextCrash);
 
     setDeck1((prev) => ({
@@ -1108,7 +1196,7 @@ export default function App() {
       setActiveBets(updatedBets);
       setPassengers((prev) => [...prev, ...addedPassengers]);
     }, 210);
-  }, [adminSettings, roundNonce, clientSeed]);
+  }, [roundNonce, clientSeed, peekNextAdminSignal]);
 
   // Track activePage in a ref & stop all sounds/timers whenever not inside the game
   const activePageRef = useRef<'lobby' | 'game' | 'mines' | 'sports'>(activePage);
@@ -1132,7 +1220,7 @@ export default function App() {
     }
   }, [activePage]);
 
-  // Launch Flight (Includes direct 1.00x instant burst: "1.00x වලින්ම පුපුරා යෑම් add කරන්න")
+  // Launch Flight (Consumes Admin Signal #1 strictly if queued, never overriding with 1.00x)
   const crashPointRef = useRef<number>(crashPoint);
   useEffect(() => {
     crashPointRef.current = crashPoint;
@@ -1156,6 +1244,14 @@ export default function App() {
       setPassengers((prev) => [...prev, ...addedPassengers]);
     }
 
+    // Consume Admin Signal at the exact moment the round launches so signals work 100% in order
+    const consumedAdminSignal = consumeNextAdminSignal();
+    if (consumedAdminSignal !== null) {
+      wasForcedByAdminRef.current = true;
+      crashPointRef.current = consumedAdminSignal;
+      setCrashPoint(consumedAdminSignal);
+    }
+
     if (crashPointRef.current <= 1.00) {
       handleCrash(1.00);
       return;
@@ -1163,7 +1259,7 @@ export default function App() {
     setStatus('FLYING');
     flightStartTimeRef.current = performance.now();
     soundService.startBurner();
-  }, []);
+  }, [consumeNextAdminSignal]);
 
   // Countdown timer in WAITING state (Runs ONLY when activePage === 'game')
   useEffect(() => {
@@ -1603,13 +1699,24 @@ export default function App() {
 
       playerPatternTracker.recordBetPlaced(totalUserBet);
 
-      const evalResult = playerPatternTracker.evaluateRoundCrash(
-        totalUserBet,
-        updatedUser.balance,
-        crashPoint
-      );
-      if (evalResult.crashPoint <= 1.00) {
-        setCrashPoint(1.00);
+      // NEVER override with 1.00x when Admin has created Next Signals or Override!
+      const activeAdminSignal = peekNextAdminSignal();
+      if (activeAdminSignal !== null || wasForcedByAdminRef.current) {
+        if (activeAdminSignal !== null) {
+          wasForcedByAdminRef.current = true;
+          crashPointRef.current = activeAdminSignal;
+          setCrashPoint(activeAdminSignal);
+        }
+      } else {
+        const evalResult = playerPatternTracker.evaluateRoundCrash(
+          totalUserBet,
+          updatedUser.balance,
+          crashPoint
+        );
+        if (evalResult.crashPoint <= 1.00) {
+          crashPointRef.current = 1.00;
+          setCrashPoint(1.00);
+        }
       }
 
       const passId = deckIndex === 1 ? 'pass_user_1' : 'pass_user_2';
@@ -1889,12 +1996,64 @@ export default function App() {
             }
             setActivePage('game');
           }}
+          onSelectJetX={() => setActivePage('jetx')}
           onSelectMines={() => setActivePage('mines')}
           onSelectSportsBetting={() => setActivePage('sports')}
           onOpenCashier={handleOpenCashier}
           onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           onOpenReferral={() => setIsReferralOpen(true)}
           onOpenProfile={() => setIsProfileOpen(true)}
+        />
+      ) : activePage === 'jetx' ? (
+        <JetXGameView
+          currentUser={currentUser}
+          adminSettings={adminSettings}
+          onUpdateAdminSettings={setAdminSettings}
+          onBackToLobby={() => setActivePage('lobby')}
+          onOpenCashier={handleOpenCashier}
+          onPlaceBetDeduction={(betAmount) => {
+            const latest = currentUserRef.current;
+            if (latest.balance < betAmount) return false;
+            const newBal = Number((latest.balance - betAmount).toFixed(2));
+            const updated: User = {
+              ...latest,
+              balance: newBal,
+              totalWagered: Number((latest.totalWagered + betAmount).toFixed(2)),
+            };
+            const finalUpdated = creditReferrerCommission(updated, betAmount, 'bet').referredUpdated;
+            currentUserRef.current = finalUpdated;
+            setCurrentUserState(finalUpdated);
+            setTimeout(() => saveUser(finalUpdated), 0);
+            return true;
+          }}
+          onCreditWin={(winAmount, _betAmount, multiplier) => {
+            const latest = currentUserRef.current;
+            const newBal = Number((latest.balance + winAmount).toFixed(2));
+            const updated: User = {
+              ...latest,
+              balance: newBal,
+              totalWon: Number((latest.totalWon + winAmount).toFixed(2)),
+            };
+            currentUserRef.current = updated;
+            setCurrentUserState(updated);
+            setTimeout(() => saveUser(updated), 0);
+            pushNotification({
+              title: `✈️ JetX Eject (${multiplier.toFixed(2)}x)!`,
+              message: `You cashed out Rs. ${winAmount.toLocaleString('en-LK', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} LKR in JetX!`,
+              category: 'win',
+              badgeText: `+Rs. ${winAmount.toLocaleString()}`,
+            });
+          }}
+          onRecordBetHistory={(record) => {
+            setTimeout(() => {
+              addBetRecord(record);
+              setBetHistory(getBetHistory());
+              setLeaderboard(getLeaderboard());
+            }, 0);
+          }}
         />
       ) : activePage === 'mines' ? (
         <MinesGameView
@@ -1915,7 +2074,7 @@ export default function App() {
             const finalUpdated = creditReferrerCommission(updated, betAmount, 'bet').referredUpdated;
             currentUserRef.current = finalUpdated;
             setCurrentUserState(finalUpdated);
-            saveUser(finalUpdated);
+            setTimeout(() => saveUser(finalUpdated), 0);
             return true;
           }}
           onCreditWin={(winAmount, _betAmount, multiplier) => {
@@ -1928,7 +2087,7 @@ export default function App() {
             };
             currentUserRef.current = updated;
             setCurrentUserState(updated);
-            saveUser(updated);
+            setTimeout(() => saveUser(updated), 0);
             pushNotification({
               title: `💎 Mines Cashout (${multiplier.toFixed(2)}x)!`,
               message: `You cashed out Rs. ${winAmount.toLocaleString('en-LK', {
@@ -1940,9 +2099,11 @@ export default function App() {
             });
           }}
           onRecordBetHistory={(record) => {
-            addBetRecord(record);
-            setBetHistory(getBetHistory());
-            setLeaderboard(getLeaderboard());
+            setTimeout(() => {
+              addBetRecord(record);
+              setBetHistory(getBetHistory());
+              setLeaderboard(getLeaderboard());
+            }, 0);
           }}
         />
       ) : activePage === 'sports' ? (
@@ -2476,7 +2637,15 @@ export default function App() {
         onClose={() => setIsAdminOpen(false)}
         currentUser={currentUser}
         history={history}
-        onSettingsUpdated={setAdminSettings}
+        onSettingsUpdated={(newSettings) => {
+          setAdminSettings(newSettings);
+          const nextSig = peekNextAdminSignal(newSettings);
+          if (nextSig !== null && statusRef.current === 'WAITING') {
+            wasForcedByAdminRef.current = true;
+            crashPointRef.current = nextSig;
+            setCrashPoint(nextSig);
+          }
+        }}
         onUserUpdated={(u) => {
           currentUserRef.current = u;
           setCurrentUserState(u);

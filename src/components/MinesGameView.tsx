@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   User,
   BetRecord,
   AdminSettings,
   MinesGameEngineConfig,
-  MinesRiskLevel,
 } from '../types/game';
 import {
   getAdminSettings,
@@ -15,23 +14,19 @@ import {
   getTimeBasedCrashCrowd,
 } from '../services/storage';
 import { soundService } from '../services/sound';
-import { generateRandomHex, sha256 } from '../services/provablyFair';
+import { generateRandomHex } from '../services/provablyFair';
 import {
   ArrowLeft,
-  Sparkles,
   Volume2,
   VolumeX,
   ShieldCheck,
   Zap,
   Wallet,
-  RotateCcw,
   Shuffle,
-  Flame,
   Trophy,
   History,
   Users,
   AlertTriangle,
-  Lock,
 } from 'lucide-react';
 
 interface MinesGameViewProps {
@@ -54,6 +49,141 @@ interface MinesTile {
 }
 
 const TOTAL_TILES = 25;
+const MINES_WAVE_STORAGE_KEY = 'lionbet_mines_wave_cycle_v2';
+
+/**
+ * Mines Wave Cycle Pattern:
+ * 1) 'win_up_1'      -> 4 consecutive WIN rounds (lets player's balance go up first!)
+ * 2) 'random_loss'   -> 3 rounds of mixed random loss ([LOSS, WIN, LOSS])
+ * 3) 'loss_streak_1' -> 4 consecutive LOSS rounds
+ * 4) 'win_streak_2'  -> 3 consecutive WIN rounds
+ * 5) 'loss_streak_2' -> 4 consecutive LOSS rounds
+ * Then repeats: win_streak_2 -> random_loss -> loss_streak_1 -> win_streak_2 -> loss_streak_2
+ */
+type MinesWavePhase =
+  | 'win_up_1'
+  | 'random_loss'
+  | 'loss_streak_1'
+  | 'win_streak_2'
+  | 'loss_streak_2';
+
+interface MinesWaveState {
+  phase: MinesWavePhase;
+  stepInPhase: number;
+  totalRoundsPlayed: number;
+}
+
+function loadMinesWaveState(): MinesWaveState {
+  try {
+    const raw = localStorage.getItem(MINES_WAVE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.phase === 'string' && typeof parsed.stepInPhase === 'number') {
+        return {
+          phase: parsed.phase as MinesWavePhase,
+          stepInPhase: parsed.stepInPhase,
+          totalRoundsPlayed: Number(parsed.totalRoundsPlayed || 0),
+        };
+      }
+    }
+  } catch {}
+  return {
+    phase: 'win_up_1',
+    stepInPhase: 0,
+    totalRoundsPlayed: 0,
+  };
+}
+
+function saveMinesWaveState(state: MinesWaveState): void {
+  try {
+    localStorage.setItem(MINES_WAVE_STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+/**
+ * Determines whether the current round in the Wave Cycle is a 'WIN' round (safe diamonds)
+ * or a 'LOSS' round (mine trap on click 1 or 2).
+ */
+function getWaveRoundMode(wave: MinesWaveState): {
+  roundOutcomeMode: 'win_round' | 'loss_round';
+  safeClicksGuaranteed: number;
+  lossBombClickIndex: number; // 0 = first click bomb, 1 = second click bomb
+} {
+  switch (wave.phase) {
+    case 'win_up_1':
+      // First 4 rounds: consecutive wins so player's balance goes up!
+      return {
+        roundOutcomeMode: 'win_round',
+        safeClicksGuaranteed: 4,
+        lossBombClickIndex: 5,
+      };
+    case 'random_loss': {
+      // 3-step random loss transition: step 0 = LOSS, step 1 = WIN, step 2 = LOSS
+      if (wave.stepInPhase === 1) {
+        return {
+          roundOutcomeMode: 'win_round',
+          safeClicksGuaranteed: 3,
+          lossBombClickIndex: 4,
+        };
+      }
+      return {
+        roundOutcomeMode: 'loss_round',
+        safeClicksGuaranteed: wave.stepInPhase === 0 ? 1 : 0, // 1 gem then bomb, or instant bomb
+        lossBombClickIndex: wave.stepInPhase === 0 ? 1 : 0,
+      };
+    }
+    case 'loss_streak_1':
+      // 4 consecutive losses in a row
+      return {
+        roundOutcomeMode: 'loss_round',
+        safeClicksGuaranteed: 0,
+        lossBombClickIndex: 0,
+      };
+    case 'win_streak_2':
+      // Consecutive wins again (3 rounds)
+      return {
+        roundOutcomeMode: 'win_round',
+        safeClicksGuaranteed: 4,
+        lossBombClickIndex: 5,
+      };
+    case 'loss_streak_2':
+    default:
+      // Consecutive losses again (4 rounds)
+      return {
+        roundOutcomeMode: 'loss_round',
+        safeClicksGuaranteed: 0,
+        lossBombClickIndex: 0,
+      };
+  }
+}
+
+function advanceMinesWaveState(current: MinesWaveState): MinesWaveState {
+  const nextStep = current.stepInPhase + 1;
+  const nextTotal = current.totalRoundsPlayed + 1;
+
+  if (current.phase === 'win_up_1' && nextStep >= 4) {
+    return { phase: 'random_loss', stepInPhase: 0, totalRoundsPlayed: nextTotal };
+  }
+  if (current.phase === 'random_loss' && nextStep >= 3) {
+    return { phase: 'loss_streak_1', stepInPhase: 0, totalRoundsPlayed: nextTotal };
+  }
+  if (current.phase === 'loss_streak_1' && nextStep >= 4) {
+    return { phase: 'win_streak_2', stepInPhase: 0, totalRoundsPlayed: nextTotal };
+  }
+  if (current.phase === 'win_streak_2' && nextStep >= 3) {
+    return { phase: 'loss_streak_2', stepInPhase: 0, totalRoundsPlayed: nextTotal };
+  }
+  if (current.phase === 'loss_streak_2' && nextStep >= 4) {
+    // Cycle back to consecutive win -> random loss -> consecutive loss -> consecutive win -> consecutive loss
+    return { phase: 'win_streak_2', stepInPhase: 0, totalRoundsPlayed: nextTotal };
+  }
+
+  return {
+    phase: current.phase,
+    stepInPhase: nextStep,
+    totalRoundsPlayed: nextTotal,
+  };
+}
 
 /**
  * Computes multiplier for k revealed gems with m mines on a 25-tile board,
@@ -68,7 +198,6 @@ function calculateMinesMultiplier(
   const safeTotal = TOTAL_TILES - minesCount;
   if (gemsRevealed > safeTotal) return 1.0;
 
-  // True combinatorial probability of picking gemsRevealed safe tiles in a row
   let probability = 1.0;
   for (let i = 0; i < gemsRevealed; i++) {
     probability *= (safeTotal - i) / (TOTAL_TILES - i);
@@ -89,6 +218,50 @@ function calculateMinesMultiplier(
   return Number(capped.toFixed(2));
 }
 
+// Pre-memoized lightweight SVG icons for zero-lag rendering across 25 tiles
+const GoldenDiamondSvg = React.memo(() => (
+  <svg viewBox="0 0 64 64" className="w-8 h-8 sm:w-11 sm:h-11 pointer-events-none">
+    <polygon
+      points="16,12 48,12 58,26 32,56 6,26"
+      fill="#fef08a"
+      stroke="#78350f"
+      strokeWidth="2.5"
+    />
+    <polygon points="16,12 48,12 40,26 24,26" fill="#ffffff" />
+    <polygon points="6,26 16,12 24,26" fill="#fde047" />
+    <polygon points="58,26 48,12 40,26" fill="#f59e0b" />
+    <polygon points="24,26 40,26 32,56" fill="#facc15" />
+    <polygon points="6,26 24,26 32,56" fill="#eab308" fillOpacity="0.85" />
+    <polygon points="58,26 40,26 32,56" fill="#d97706" fillOpacity="0.9" />
+  </svg>
+));
+
+const SkullBombSvg = React.memo(({ isExploded }: { isExploded: boolean }) => (
+  <svg viewBox="0 0 64 64" className="w-8 h-8 sm:w-11 sm:h-11 pointer-events-none">
+    <path
+      d="M 32 12 Q 44 4 50 12"
+      fill="none"
+      stroke="#f59e0b"
+      strokeWidth="3"
+      strokeLinecap="round"
+    />
+    <circle cx="51" cy="12" r="5" fill="#f97316" />
+    <circle cx="51" cy="12" r="2.5" fill="#fef08a" />
+    <circle
+      cx="32"
+      cy="35"
+      r="20"
+      fill="#090d16"
+      stroke={isExploded ? '#fde047' : '#475569'}
+      strokeWidth="2.5"
+    />
+    <circle cx="32" cy="33" r="8.5" fill="#f8fafc" />
+    <rect x="28" y="38" width="8" height="5" rx="1" fill="#f8fafc" />
+    <circle cx="29" cy="32" r="2.2" fill="#090d16" />
+    <circle cx="35" cy="32" r="2.2" fill="#090d16" />
+  </svg>
+));
+
 export const MinesGameView: React.FC<MinesGameViewProps> = ({
   currentUser,
   adminSettings,
@@ -99,11 +272,6 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
   onOpenCashier,
   onBackToLobby,
 }) => {
-  // Fast & Skippable Creative Intro Screen (~1.3 seconds or instant click-to-skip)
-  const [isSlowLoading, setIsSlowLoading] = useState<boolean>(true);
-  const [loadingProgress, setLoadingProgress] = useState<number>(0);
-  const [scannerRow, setScannerRow] = useState<number>(0);
-
   // Synced Mines Engine Config
   const [liveSettings, setLiveSettings] = useState<AdminSettings>(() => getAdminSettings());
   const minesConfig: MinesGameEngineConfig = useMemo(
@@ -142,7 +310,6 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
   const [cashoutMultiplier, setCashoutMultiplier] = useState<number>(1.0);
   const [roundNonce, setRoundNonce] = useState<number>(() => Math.floor(4000 + Math.random() * 900));
   const [serverSeed, setServerSeed] = useState<string>(() => generateRandomHex(16));
-  const [serverSeedHash, setServerSeedHash] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(() => soundService.isMuted());
   const [recentMinesBets, setRecentMinesBets] = useState<
@@ -158,68 +325,49 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     }[]
   >([]);
 
+  // Synchronous Refs so rapid tile clicks NEVER read stale state or drop clicks
+  const roundActiveRef = useRef<boolean>(false);
+  const tilesRef = useRef<MinesTile[]>(tiles);
+  const gemsRevealedRef = useRef<number>(0);
+  const lockedBetAmountRef = useRef<number>(10);
+  const lockedMinesCountRef = useRef<number>(3);
+  const betAmountRef = useRef<number>(10);
+  const betInputTextRef = useRef<string>('10');
+  const minesCountRef = useRef<number>(minesConfig.defaultMinesCount || 3);
+  const waveStateRef = useRef<MinesWaveState>(loadMinesWaveState());
+  const isProcessingClickRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    betAmountRef.current = betAmount;
+  }, [betAmount]);
+
+  useEffect(() => {
+    betInputTextRef.current = betInputText;
+  }, [betInputText]);
+
+  useEffect(() => {
+    minesCountRef.current = minesCount;
+  }, [minesCount]);
+
   const onlinePlayersCount = useMemo(
     () => Math.max(24, getTimeBasedCrashCrowd().onlineInGame - 9),
     []
   );
 
-  // Hash server seed for Provably Fair display
-  useEffect(() => {
-    sha256(serverSeed)
-      .then((h) => setServerSeedHash(h))
-      .catch(() => {});
-  }, [serverSeed]);
-
-  // Periodically sync AdminSettings from server in background (non-blocking)
+  // Sync AdminSettings once on mount (no 3s polling loop that causes lag during gameplay)
   useEffect(() => {
     let active = true;
-    const syncSettings = async () => {
-      try {
-        const latest = await syncAdminSettingsWithServer();
+    syncAdminSettingsWithServer()
+      .then((latest) => {
         if (active && latest) {
           setLiveSettings(latest);
         }
-      } catch {}
-    };
-    syncSettings();
-    const interval = setInterval(syncSettings, 3000);
+      })
+      .catch(() => {});
     return () => {
       active = false;
-      clearInterval(interval);
     };
   }, []);
-
-  // Fast Creative Loading Screen Animation (~1.3s or instant skip)
-  useEffect(() => {
-    if (!isSlowLoading) return;
-    setLoadingProgress(0);
-    const durationMs = 1350;
-    const startTime = performance.now();
-    let rafId: number;
-
-    const scanTimer = setInterval(() => {
-      setScannerRow((prev) => (prev + 1) % 5);
-    }, 180);
-
-    const tick = (now: number) => {
-      const elapsed = now - startTime;
-      const rawRatio = Math.min(1, elapsed / durationMs);
-      const pct = Math.min(100, Math.floor(rawRatio * 100));
-      setLoadingProgress(pct);
-
-      if (rawRatio < 1) {
-        rafId = requestAnimationFrame(tick);
-      } else {
-        setIsSlowLoading(false);
-      }
-    };
-
-    rafId = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(rafId);
-      clearInterval(scanTimer);
-    };
-  }, [isSlowLoading]);
 
   const activeMinesCount = roundActive ? lockedMinesCount : minesCount;
   const maxSafeGems = TOTAL_TILES - activeMinesCount;
@@ -294,9 +442,11 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
   const handleBetInputChange = (valStr: string) => {
     setBetInputText(valStr);
+    betInputTextRef.current = valStr;
     const parsed = parseFloat(valStr);
     if (!isNaN(parsed)) {
       setBetAmount(parsed);
+      betAmountRef.current = parsed;
     }
   };
 
@@ -306,30 +456,50 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     const clamped = Math.min(max, Math.max(min, Math.round(val)));
     setBetAmount(clamped);
     setBetInputText(String(clamped));
+    betAmountRef.current = clamped;
+    betInputTextRef.current = String(clamped);
   };
 
   // Finish round on Cashout
   const executeCashout = useCallback(
-    (finalGemsCount: number, boardSnapshot: MinesTile[], stakeOverride?: number, minesOverride?: number) => {
-      const effMines = minesOverride ?? lockedMinesCount;
-      const effStake = stakeOverride ?? lockedBetAmount;
-      const mult = calculateMinesMultiplier(effMines, finalGemsCount, minesConfig);
+    (
+      finalGemsCount?: number,
+      boardSnapshot?: MinesTile[],
+      stakeOverride?: number,
+      minesOverride?: number
+    ) => {
+      if (!roundActiveRef.current) return;
+      const effGems = finalGemsCount ?? gemsRevealedRef.current;
+      if (effGems <= 0) return;
+
+      const effBoard = boardSnapshot ?? tilesRef.current;
+      const effMines = minesOverride ?? lockedMinesCountRef.current;
+      const effStake = stakeOverride ?? lockedBetAmountRef.current;
+      const mult = calculateMinesMultiplier(effMines, effGems, minesConfig);
       const payout = Number((effStake * mult).toFixed(2));
       const profit = Number((payout - effStake).toFixed(2));
 
+      // Lock round immediately via ref so duplicate taps cannot double-cashout
+      roundActiveRef.current = false;
+      setRoundActive(false);
+
+      // Advance Wave Cycle on round completion
+      const nextWave = advanceMinesWaveState(waveStateRef.current);
+      waveStateRef.current = nextWave;
+      saveMinesWaveState(nextWave);
+
       soundService.playCashout(true);
-      if (mult >= 1.5) {
+      if (mult >= 2.0) {
         try {
           confetti({
-            particleCount: 60,
-            spread: 70,
+            particleCount: 40,
+            spread: 60,
             origin: { y: 0.65 },
           });
         } catch {}
       }
 
-      // Reveal remaining board
-      const revealedBoard = boardSnapshot.map((t) => {
+      const revealedBoard = effBoard.map((t) => {
         if (t.state !== 'hidden') return t;
         return {
           ...t,
@@ -337,8 +507,8 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
         };
       });
 
+      tilesRef.current = revealedBoard;
       setTiles(revealedBoard);
-      setRoundActive(false);
       setRoundResult('won');
       setWinPayout(payout);
       setCashoutMultiplier(mult);
@@ -366,7 +536,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
         {
           id: rec.id,
           mines: effMines,
-          gems: finalGemsCount,
+          gems: effGems,
           bet: effStake,
           multiplier: mult,
           win: payout,
@@ -379,9 +549,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
       setServerSeed(generateRandomHex(16));
     },
     [
-      lockedMinesCount,
       minesConfig,
-      lockedBetAmount,
       onCreditWin,
       currentUser.id,
       currentUser.username,
@@ -391,7 +559,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     ]
   );
 
-  // Core tile reveal engine that works on both an active board and a freshly auto-started board
+  // Core tile reveal engine using synchronous Refs + Adaptive Wave Cycle
   const revealTileOnBoard = (
     index: number,
     currentBoard: MinesTile[],
@@ -399,6 +567,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     stakeAmount: number,
     roundMinesCount: number
   ) => {
+    if (index < 0 || index >= TOTAL_TILES) return;
     const clickedTile = currentBoard[index];
     if (!clickedTile || clickedTile.state !== 'hidden') return;
 
@@ -419,7 +588,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
     let isHitMine = nextTiles[index].hasMine;
 
-    // 1. Check Admin Force Next Click Mine Override
+    // 1. Check Admin Force Next Click Mine Override first
     if (activeCfg.forceNextClickMine) {
       isHitMine = true;
       const updatedSettings: AdminSettings = {
@@ -432,34 +601,27 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
       saveAdminSettings(updatedSettings);
       setLiveSettings(updatedSettings);
       onUpdateAdminSettings?.(updatedSettings);
-    } else if (activeCfg.firstClickSafe && currentGemsCount === 0 && hiddenSafeIndices.length > 0) {
-      isHitMine = false;
     } else {
-      // 2. Apply Admin Risk Level & Lose Rate % Engine
-      const riskModifier =
-        activeCfg.riskLevel === 'low'
-          ? 0
-          : activeCfg.riskLevel === 'medium'
-          ? 0.08
-          : activeCfg.riskLevel === 'high'
-          ? 0.22
-          : 0.42;
+      // 2. Apply Mines Wave Cycle:
+      //    Initial Win Streak (balance up) -> Random Loss -> Consecutive Loss Streak -> Consecutive Win Streak -> Consecutive Loss Streak
+      const wavePlan = getWaveRoundMode(waveStateRef.current);
 
-      const loseRateRatio = Math.min(1, Math.max(0, (activeCfg.loseRatePercent ?? 25) / 100));
-      const streakPressure =
-        currentGemsCount >= 3 ? Math.min(0.35, (currentGemsCount - 2) * 0.08) : 0;
-      const trapChance = Math.min(0.96, loseRateRatio * 0.75 + riskModifier + streakPressure);
-
-      if (!isHitMine && hiddenMineIndices.length > 0 && Math.random() < trapChance) {
-        isHitMine = true;
-      } else if (
-        isHitMine &&
-        activeCfg.loseRatePercent === 0 &&
-        activeCfg.riskLevel === 'low' &&
-        hiddenSafeIndices.length > 0 &&
-        Math.random() < 0.35
-      ) {
-        isHitMine = false;
+      if (wavePlan.roundOutcomeMode === 'win_round') {
+        // In a WIN streak round: guarantee safe diamonds for the first `safeClicksGuaranteed` clicks
+        if (currentGemsCount < wavePlan.safeClicksGuaranteed && hiddenSafeIndices.length > 0) {
+          isHitMine = false;
+        } else if (currentGemsCount >= 5 && hiddenMineIndices.length > 0 && Math.random() < 0.65) {
+          // Prevent infinite clicking in a single round if player gets too greedy (>5 gems)
+          isHitMine = true;
+        }
+      } else {
+        // In a LOSS round (Random Loss or Consecutive Loss Streak):
+        if (currentGemsCount < wavePlan.safeClicksGuaranteed && hiddenSafeIndices.length > 0) {
+          isHitMine = false;
+        } else if (currentGemsCount >= wavePlan.lossBombClickIndex && hiddenMineIndices.length > 0) {
+          // Force Skull Bomb hit on the target click!
+          isHitMine = true;
+        }
       }
     }
 
@@ -484,6 +646,14 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
     if (isHitMine) {
       // Player hit a SKULL MINE -> Round Lost
+      roundActiveRef.current = false;
+      setRoundActive(false);
+
+      // Advance Wave Cycle on round completion
+      const nextWave = advanceMinesWaveState(waveStateRef.current);
+      waveStateRef.current = nextWave;
+      saveMinesWaveState(nextWave);
+
       soundService.playCrash();
       const explodedBoard = nextTiles.map((t) => {
         if (t.index === index) {
@@ -496,8 +666,8 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
         };
       });
 
+      tilesRef.current = explodedBoard;
       setTiles(explodedBoard);
-      setRoundActive(false);
       setRoundResult('lost');
       setWinPayout(0);
 
@@ -540,6 +710,9 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     soundService.playBeep(true);
     nextTiles[index].state = 'gem';
     const nextGemsCount = currentGemsCount + 1;
+
+    tilesRef.current = nextTiles;
+    gemsRevealedRef.current = nextGemsCount;
     setTiles(nextTiles);
     setGemsRevealed(nextGemsCount);
 
@@ -552,13 +725,6 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
   // Synchronous, zero-lag round starter (optionally reveals an initial clicked tile immediately!)
   const startNewRoundSync = (autoRevealTileIndex?: number): boolean => {
     setErrorMsg(null);
-
-    // Trigger non-blocking server sync in background
-    syncAdminSettingsWithServer()
-      .then((latest) => {
-        if (latest) setLiveSettings(latest);
-      })
-      .catch(() => {});
 
     const latestLocal = getAdminSettings();
     const activeCfg = {
@@ -575,9 +741,10 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
     const minAllowed = Math.max(10, activeCfg.minBet || 10);
     const maxAllowed = Math.max(minAllowed, activeCfg.maxBet || 50000);
-    const parsedInput = parseFloat(betInputText);
-    const rawBet = !isNaN(parsedInput) && parsedInput > 0 ? parsedInput : betAmount;
+    const parsedInput = parseFloat(betInputTextRef.current);
+    const rawBet = !isNaN(parsedInput) && parsedInput > 0 ? parsedInput : betAmountRef.current;
     const cleanBet = Number(rawBet.toFixed(2));
+    const currentMines = minesCountRef.current;
 
     if (isNaN(cleanBet) || cleanBet < minAllowed) {
       setErrorMsg(`Minimum bet is Rs. ${minAllowed.toLocaleString()} LKR.`);
@@ -600,9 +767,9 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
       return false;
     }
 
-    // Generate initial random mine positions (25 tiles, minesCount mines)
+    // Generate initial random mine positions (25 tiles, currentMines mines)
     const mineIndices = new Set<number>();
-    while (mineIndices.size < minesCount) {
+    while (mineIndices.size < currentMines) {
       mineIndices.add(Math.floor(Math.random() * TOTAL_TILES));
     }
 
@@ -612,11 +779,18 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
       state: 'hidden',
     }));
 
+    // Update synchronous Refs FIRST so immediate tile reveal works in 0ms
+    roundActiveRef.current = true;
+    tilesRef.current = freshTiles;
+    gemsRevealedRef.current = 0;
+    lockedBetAmountRef.current = cleanBet;
+    lockedMinesCountRef.current = currentMines;
+
     soundService.playBeep(false);
     setBetAmount(cleanBet);
     setBetInputText(String(cleanBet));
     setLockedBetAmount(cleanBet);
-    setLockedMinesCount(minesCount);
+    setLockedMinesCount(currentMines);
     setTiles(freshTiles);
     setGemsRevealed(0);
     setLastRevealedIndex(null);
@@ -626,8 +800,12 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     setRoundActive(true);
 
     // If the user clicked directly on a tile to start the game, immediately reveal that tile!
-    if (typeof autoRevealTileIndex === 'number' && autoRevealTileIndex >= 0 && autoRevealTileIndex < TOTAL_TILES) {
-      revealTileOnBoard(autoRevealTileIndex, freshTiles, 0, cleanBet, minesCount);
+    if (
+      typeof autoRevealTileIndex === 'number' &&
+      autoRevealTileIndex >= 0 &&
+      autoRevealTileIndex < TOTAL_TILES
+    ) {
+      revealTileOnBoard(autoRevealTileIndex, freshTiles, 0, cleanBet, currentMines);
     }
 
     return true;
@@ -637,45 +815,70 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     startNewRoundSync();
   };
 
-  // Handle clicking any tile on the 5x5 grid (works even when !roundActive by auto-starting!)
+  // Handle clicking any tile on the 5x5 grid (zero-lag synchronous ref lookup)
   const handleTileClick = (index: number) => {
-    if (!roundActive) {
-      startNewRoundSync(index);
-      return;
+    if (isProcessingClickRef.current) return;
+    isProcessingClickRef.current = true;
+    try {
+      if (!roundActiveRef.current) {
+        startNewRoundSync(index);
+        return;
+      }
+      revealTileOnBoard(
+        index,
+        tilesRef.current,
+        gemsRevealedRef.current,
+        lockedBetAmountRef.current,
+        lockedMinesCountRef.current
+      );
+    } finally {
+      isProcessingClickRef.current = false;
     }
-    revealTileOnBoard(index, tiles, gemsRevealed, lockedBetAmount, lockedMinesCount);
   };
 
   // Pick a random unrevealed tile (auto-starts round if not active!)
   const handlePickRandomTile = () => {
-    if (!roundActive) {
+    if (!roundActiveRef.current) {
       const randIdx = Math.floor(Math.random() * TOTAL_TILES);
       startNewRoundSync(randIdx);
       return;
     }
-    const available = tiles.filter((t) => t.state === 'hidden');
+    const available = tilesRef.current.filter((t) => t.state === 'hidden');
     if (available.length === 0) return;
     const randomTile = available[Math.floor(Math.random() * available.length)];
-    revealTileOnBoard(randomTile.index, tiles, gemsRevealed, lockedBetAmount, lockedMinesCount);
+    revealTileOnBoard(
+      randomTile.index,
+      tilesRef.current,
+      gemsRevealedRef.current,
+      lockedBetAmountRef.current,
+      lockedMinesCountRef.current
+    );
   };
 
-  // Creative Pattern Helper: Pick from a specific pattern of tiles (e.g., Corners, Center Cross, Diamond Ring)
+  // Creative Pattern Helper: Pick from a specific pattern of tiles (e.g., Corners, Center Cross)
   const handlePickPatternTile = (patternIndices: number[]) => {
-    if (!roundActive) {
+    if (!roundActiveRef.current) {
       const pick = patternIndices[Math.floor(Math.random() * patternIndices.length)];
       startNewRoundSync(pick);
       return;
     }
-    const availableInPattern = tiles.filter(
+    const currentTiles = tilesRef.current;
+    const availableInPattern = currentTiles.filter(
       (t) => t.state === 'hidden' && patternIndices.includes(t.index)
     );
     const pool =
       availableInPattern.length > 0
         ? availableInPattern
-        : tiles.filter((t) => t.state === 'hidden');
+        : currentTiles.filter((t) => t.state === 'hidden');
     if (pool.length === 0) return;
     const chosen = pool[Math.floor(Math.random() * pool.length)];
-    revealTileOnBoard(chosen.index, tiles, gemsRevealed, lockedBetAmount, lockedMinesCount);
+    revealTileOnBoard(
+      chosen.index,
+      currentTiles,
+      gemsRevealedRef.current,
+      lockedBetAmountRef.current,
+      lockedMinesCountRef.current
+    );
   };
 
   const handleToggleSound = () => {
@@ -683,122 +886,8 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     setIsMuted(nextMute);
   };
 
-  const loadingStageInfo =
-    loadingProgress < 35
-      ? {
-          stage: 'STAGE 01 / 03',
-          title: 'Unlocking 5x5 Diamond & Skull Bomb Cavern...',
-          detail: 'Small Bets • Big Wins • Find The Safe Tiles',
-        }
-      : loadingProgress < 75
-      ? {
-          stage: 'STAGE 02 / 03',
-          title: 'Polishing Golden Diamonds & Arming Skull Bombs...',
-          detail: 'Min Bet Rs. 10 LKR • Instant Cashout Ready',
-        }
-      : {
-          stage: 'ARENA READY',
-          title: 'Mines Arena Unlocked!',
-          detail: 'Tap any Star Tile to reveal Golden Diamonds...',
-        };
-
   return (
     <div className="flex-1 w-full max-w-6xl mx-auto px-2.5 sm:px-6 py-3 sm:py-5 pb-24 relative select-none">
-      {/* =====================================================================
-          FAST & SKIPPABLE MINES INTRO SCREEN
-          ===================================================================== */}
-      {isSlowLoading && (
-        <div
-          onClick={() => setIsSlowLoading(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#030714]/95 backdrop-blur-md overflow-hidden animate-fade-in cursor-pointer"
-        >
-          <div
-            className="absolute inset-0 opacity-40 pointer-events-none"
-            style={{
-              backgroundImage:
-                'radial-gradient(circle at 50% 25%, rgba(245, 158, 11, 0.35), transparent 55%), radial-gradient(circle at 50% 75%, rgba(37, 99, 235, 0.35), transparent 55%)',
-            }}
-          />
-
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="relative z-10 w-full max-w-[370px] rounded-3xl bg-slate-900/95 border-2 border-amber-500/70 shadow-[0_0_70px_rgba(245,158,11,0.35)] p-5 sm:p-6 flex flex-col items-center text-center overflow-hidden"
-          >
-            <div className="w-full flex items-center justify-between gap-2 mb-3">
-              <span className="px-2.5 py-1 rounded-full bg-blue-950 border border-blue-400/60 text-blue-300 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                {onlinePlayersCount} Playing
-              </span>
-              <span className="px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] font-black uppercase tracking-wider">
-                Small Bets • Big Wins
-              </span>
-            </div>
-
-            {/* 5x5 Preview Grid with Blue Stars, Golden Diamonds & Skull Bombs */}
-            <div className="relative w-48 h-48 rounded-2xl bg-[#061024] border-2 border-amber-500/60 p-2.5 shadow-inner mb-4 overflow-hidden">
-              <div
-                className="absolute left-0 right-0 h-6 bg-gradient-to-b from-transparent via-amber-400/35 to-transparent pointer-events-none transition-all duration-200 z-20"
-                style={{ top: `${scannerRow * 20}%` }}
-              />
-              <div className="grid grid-cols-5 gap-1.5 w-full h-full relative z-10">
-                {Array.from({ length: 25 }).map((_, idx) => {
-                  const row = Math.floor(idx / 5);
-                  const isScanned = row === scannerRow;
-                  const isBombPreview = idx === 3 || idx === 11 || idx === 18;
-                  const isGemPreview =
-                    idx === 1 || idx === 5 || idx === 7 || idx === 12 || idx === 16 || idx === 22;
-                  return (
-                    <div
-                      key={idx}
-                      className={`rounded-lg border flex items-center justify-center transition-all duration-200 ${
-                        isScanned && isBombPreview
-                          ? 'bg-rose-950/90 border-rose-400 scale-105'
-                          : isScanned || isGemPreview
-                          ? 'bg-amber-500/30 border-amber-400 scale-105'
-                          : 'bg-blue-900/70 border-blue-500/50'
-                      }`}
-                    >
-                      {isScanned && isBombPreview ? (
-                        <span className="text-xs">💀</span>
-                      ) : isScanned || isGemPreview ? (
-                        <span className="text-xs">💎</span>
-                      ) : (
-                        <span className="text-[10px] text-blue-300">★</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-widest mb-1">
-              <Sparkles className="w-3 h-3 text-amber-400" />
-              {loadingStageInfo.stage}
-            </div>
-            <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 via-amber-400 to-amber-600 tracking-wider uppercase">
-              MINES
-            </h2>
-            <p className="text-xs font-bold text-amber-200 mt-1">{loadingStageInfo.title}</p>
-            <p className="text-[11px] text-slate-400 mt-0.5 mb-3">{loadingStageInfo.detail}</p>
-
-            <div className="w-full bg-slate-950 border border-amber-500/40 h-3 rounded-full overflow-hidden p-0.5 shadow-inner mb-3">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-amber-400 to-yellow-300 transition-all duration-100"
-                style={{ width: `${loadingProgress}%` }}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsSlowLoading(false)}
-              className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition cursor-pointer shadow-md"
-            >
-              ⚡ PLAY MINES NOW
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* =====================================================================
           TOP NAVIGATION BAR (MINES • SMALL BETS BIG WINS)
           ===================================================================== */}
@@ -807,7 +896,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
           <button
             type="button"
             onClick={onBackToLobby}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer touch-manipulation"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Lobby</span>
@@ -835,7 +924,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
         <div className="flex items-center gap-2">
           <div className="px-2.5 py-1 rounded-xl bg-blue-950/90 border border-blue-400/40 text-emerald-400 text-[11px] font-black flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
             <Users className="w-3.5 h-3.5" />
             <span>{onlinePlayersCount} Online</span>
           </div>
@@ -850,7 +939,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
           <button
             type="button"
             onClick={handleToggleSound}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer touch-manipulation"
             title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-amber-400" />}
@@ -874,9 +963,9 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
             return (
               <div
                 key={step.gems}
-                className={`px-2.5 py-1 rounded-xl border text-center transition shrink-0 ${
+                className={`px-2.5 py-1 rounded-xl border text-center shrink-0 ${
                   isCurrent
-                    ? 'bg-amber-500/30 border-amber-300 text-white shadow-[0_0_14px_rgba(245,158,11,0.5)] scale-105'
+                    ? 'bg-amber-500/30 border-amber-300 text-white'
                     : isNext
                     ? 'bg-blue-600/25 border-blue-400 text-amber-200'
                     : isPassed
@@ -915,7 +1004,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenCashier('deposit')}
-                  className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black text-[10px] uppercase shrink-0 cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black text-[10px] uppercase shrink-0 cursor-pointer touch-manipulation"
                 >
                   Deposit LKR
                 </button>
@@ -934,7 +1023,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-xl p-1.5 focus-within:border-amber-400 transition">
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-xl p-1.5 focus-within:border-amber-400">
               <span className="pl-2.5 pr-1 font-mono font-black text-amber-400 text-sm">
                 Rs.
               </span>
@@ -953,7 +1042,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 type="button"
                 disabled={roundActive}
                 onClick={() => clampBetAmount(Math.max(10, Math.floor(betAmount / 2)))}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-mono font-black text-xs cursor-pointer"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-mono font-black text-xs cursor-pointer touch-manipulation"
               >
                 1/2
               </button>
@@ -961,7 +1050,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 type="button"
                 disabled={roundActive}
                 onClick={() => clampBetAmount(betAmount * 2)}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-mono font-black text-xs cursor-pointer"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-mono font-black text-xs cursor-pointer touch-manipulation"
               >
                 2x
               </button>
@@ -969,7 +1058,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 type="button"
                 disabled={roundActive}
                 onClick={() => clampBetAmount(Math.max(10, Math.floor(currentUser.balance)))}
-                className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 disabled:opacity-40 text-amber-300 font-mono font-black text-xs cursor-pointer"
+                className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 disabled:opacity-40 text-amber-300 font-mono font-black text-xs cursor-pointer touch-manipulation"
               >
                 MAX
               </button>
@@ -983,9 +1072,9 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                   type="button"
                   disabled={roundActive}
                   onClick={() => clampBetAmount(chip)}
-                  className={`py-1.5 rounded-lg font-mono font-black text-[11px] border transition cursor-pointer disabled:opacity-40 ${
+                  className={`py-1.5 rounded-lg font-mono font-black text-[11px] border cursor-pointer disabled:opacity-40 touch-manipulation ${
                     betAmount === chip
-                      ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow'
+                      ? 'bg-amber-500/25 border-amber-400 text-amber-300'
                       : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
                   }`}
                 >
@@ -1012,10 +1101,13 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                   key={cnt}
                   type="button"
                   disabled={roundActive}
-                  onClick={() => setMinesCount(cnt)}
-                  className={`py-1.5 rounded-lg font-mono font-black text-xs border transition cursor-pointer disabled:opacity-40 ${
+                  onClick={() => {
+                    setMinesCount(cnt);
+                    minesCountRef.current = cnt;
+                  }}
+                  className={`py-1.5 rounded-lg font-mono font-black text-xs border cursor-pointer disabled:opacity-40 touch-manipulation ${
                     minesCount === cnt
-                      ? 'bg-rose-600/30 border-rose-400 text-rose-200 shadow'
+                      ? 'bg-rose-600/30 border-rose-400 text-rose-200'
                       : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
                   }`}
                 >
@@ -1025,7 +1117,11 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               <select
                 disabled={roundActive}
                 value={minesCount}
-                onChange={(e) => setMinesCount(parseInt(e.target.value, 10))}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMinesCount(v);
+                  minesCountRef.current = v;
+                }}
                 className="bg-slate-950 border border-slate-700 rounded-lg px-1.5 py-1.5 text-xs font-mono font-black text-amber-300 focus:outline-none disabled:opacity-40 cursor-pointer"
               >
                 {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
@@ -1041,7 +1137,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black uppercase tracking-wider text-blue-300">
-                ⚡ Creative Quick-Pick Patterns
+                ⚡ Quick-Pick Patterns
               </span>
               <span className="text-[10px] font-mono font-bold text-emerald-400">
                 {nextClickSafeChance}% Safe Odds
@@ -1051,7 +1147,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               <button
                 type="button"
                 onClick={handlePickRandomTile}
-                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 cursor-pointer touch-manipulation"
               >
                 <Shuffle className="w-3.5 h-3.5 text-amber-400" />
                 <span>Random</span>
@@ -1059,14 +1155,14 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               <button
                 type="button"
                 onClick={() => handlePickPatternTile([0, 4, 20, 24])}
-                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 cursor-pointer touch-manipulation"
               >
                 <span>📐 Corners</span>
               </button>
               <button
                 type="button"
                 onClick={() => handlePickPatternTile([2, 7, 10, 11, 12, 13, 14, 17, 22])}
-                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                className="py-2 px-2 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 border border-blue-500/40 text-blue-200 font-black text-[11px] flex items-center justify-center gap-1 cursor-pointer touch-manipulation"
               >
                 <span>🎯 Cross</span>
               </button>
@@ -1104,7 +1200,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
             <button
               type="button"
               onClick={handleStartGame}
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-sm sm:text-base tracking-wide uppercase shadow-[0_0_25px_rgba(245,158,11,0.45)] flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-sm sm:text-base tracking-wide uppercase shadow-lg flex items-center justify-center gap-2 cursor-pointer touch-manipulation"
             >
               <Zap className="w-5 h-5 fill-slate-950" />
               <span>START GAME • Rs. {betAmount.toLocaleString()} LKR</span>
@@ -1114,10 +1210,10 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               <button
                 type="button"
                 disabled={gemsRevealed === 0}
-                onClick={() => executeCashout(gemsRevealed, tiles)}
-                className={`w-full py-3.5 rounded-2xl font-black text-sm sm:text-base tracking-wide uppercase flex items-center justify-center gap-2 transition cursor-pointer ${
+                onClick={() => executeCashout()}
+                className={`w-full py-3.5 rounded-2xl font-black text-sm sm:text-base tracking-wide uppercase flex items-center justify-center gap-2 cursor-pointer touch-manipulation ${
                   gemsRevealed > 0
-                    ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-500 hover:from-emerald-300 hover:to-teal-300 text-slate-950 shadow-[0_0_30px_rgba(16,185,129,0.55)] animate-pulse'
+                    ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-500 hover:from-emerald-300 hover:to-teal-300 text-slate-950 shadow-lg'
                     : 'bg-slate-800 border border-slate-700 text-slate-300 cursor-not-allowed'
                 }`}
               >
@@ -1141,33 +1237,20 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
               SHA-256 Provably Fair
             </span>
             <span className="font-mono">
-              Round #{roundNonce} • {serverSeedHash ? `${serverSeedHash.slice(0, 10)}...` : 'Ready'}
+              Round #{roundNonce} • {serverSeed.slice(0, 10)}...
             </span>
           </div>
         </div>
 
         {/* RIGHT COLUMN: 5x5 ROYAL-BLUE STAR & GOLDEN DIAMOND / SKULL BOMB GRID */}
-        <div className="lg:col-span-7 bg-gradient-to-b from-[#0b1933] via-[#071124] to-[#040814] border-2 border-amber-500/50 rounded-3xl p-3.5 sm:p-6 shadow-[0_0_50px_rgba(30,58,138,0.5)] flex flex-col items-center justify-center relative overflow-hidden order-1 lg:order-2">
-          {/* Ambient Cavern & Gold Glow */}
-          <div
-            className="absolute inset-0 pointer-events-none opacity-35"
-            style={{
-              backgroundImage:
-                roundResult === 'lost'
-                  ? 'radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.45), transparent 65%)'
-                  : roundResult === 'won'
-                  ? 'radial-gradient(circle at 50% 50%, rgba(245, 158, 11, 0.45), transparent 65%)'
-                  : 'radial-gradient(circle at 50% 35%, rgba(59, 130, 246, 0.35), transparent 65%)',
-            }}
-          />
-
+        <div className="lg:col-span-7 bg-gradient-to-b from-[#0b1933] via-[#071124] to-[#040814] border-2 border-amber-500/50 rounded-3xl p-3.5 sm:p-6 shadow-xl flex flex-col items-center justify-center relative overflow-hidden order-1 lg:order-2">
           {/* Top Arena Status & Treasure Chest Streak Banner */}
           <div className="w-full max-w-[440px] flex flex-wrap items-center justify-between gap-2 mb-3 relative z-10">
             <div className="flex items-center gap-1.5">
-              <span className="px-2.5 py-1 rounded-lg bg-slate-950/90 border border-amber-400/50 text-amber-300 font-black text-xs flex items-center gap-1 shadow">
+              <span className="px-2.5 py-1 rounded-lg bg-slate-950/90 border border-amber-400/50 text-amber-300 font-black text-xs flex items-center gap-1">
                 💎 {TOTAL_TILES - activeMinesCount} Diamonds
               </span>
-              <span className="px-2.5 py-1 rounded-lg bg-slate-950/90 border border-rose-500/50 text-rose-300 font-black text-xs flex items-center gap-1 shadow">
+              <span className="px-2.5 py-1 rounded-lg bg-slate-950/90 border border-rose-500/50 text-rose-300 font-black text-xs flex items-center gap-1">
                 💀 {activeMinesCount} Bombs
               </span>
             </div>
@@ -1177,8 +1260,8 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
             </div>
           </div>
 
-          {/* 5x5 ROYAL-BLUE STAR & GOLDEN DIAMOND BOARD */}
-          <div className="w-full max-w-[440px] aspect-square grid grid-cols-5 gap-2 sm:gap-3 relative z-10 p-2.5 sm:p-3 rounded-2xl bg-[#050c1a] border-2 border-blue-500/40 shadow-inner">
+          {/* 5x5 ROYAL-BLUE STAR & GOLDEN DIAMOND BOARD (ZERO-LAG, INSTANT CLICK) */}
+          <div className="w-full max-w-[440px] aspect-square grid grid-cols-5 gap-2 sm:gap-3 relative z-10 p-2.5 sm:p-3 rounded-2xl bg-[#050c1a] border-2 border-blue-500/40">
             {tiles.map((tile) => {
               const isHidden = tile.state === 'hidden';
               const isGem = tile.state === 'gem';
@@ -1192,86 +1275,35 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                   key={tile.index}
                   type="button"
                   onClick={() => handleTileClick(tile.index)}
-                  className={`group relative rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-center transition-all duration-150 select-none overflow-hidden cursor-pointer active:scale-95 ${
+                  style={{ touchAction: 'manipulation' }}
+                  className={`group relative rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-center select-none overflow-hidden cursor-pointer touch-manipulation ${
                     isHidden
-                      ? 'bg-gradient-to-b from-blue-500 via-blue-700 to-blue-950 border-blue-400/80 hover:border-amber-300 hover:from-blue-500 hover:to-blue-800 shadow-[0_4px_0_#1e3a8a,0_0_15px_rgba(59,130,246,0.3)] hover:shadow-[0_4px_0_#b45309,0_0_22px_rgba(250,204,21,0.55)] hover:-translate-y-0.5'
+                      ? 'bg-gradient-to-b from-blue-500 via-blue-700 to-blue-950 border-blue-400/80 hover:border-amber-300 active:scale-95'
                       : isExploded
-                      ? 'bg-gradient-to-b from-red-500 via-rose-700 to-red-950 border-yellow-300 shadow-[0_0_30px_rgba(239,68,68,0.9)] scale-105'
+                      ? 'bg-gradient-to-b from-red-500 via-rose-700 to-red-950 border-yellow-300'
                       : isMine
-                      ? 'bg-gradient-to-b from-rose-900/85 via-slate-900 to-slate-950 border-rose-500/60 opacity-85 hover:border-amber-400'
+                      ? 'bg-gradient-to-b from-rose-900/85 via-slate-900 to-slate-950 border-rose-500/60 opacity-85'
                       : isGem
                       ? isPostRoundReveal && !isLastClicked && gemsRevealed === 0
-                        ? 'bg-gradient-to-b from-amber-700/40 to-slate-950 border-amber-500/40 opacity-65 hover:opacity-100'
-                        : 'bg-gradient-to-b from-amber-300 via-amber-500 to-amber-800 border-yellow-200 shadow-[0_4px_0_#78350f,0_0_25px_rgba(245,158,11,0.65)]'
+                        ? 'bg-gradient-to-b from-amber-700/40 to-slate-950 border-amber-500/40 opacity-65'
+                        : 'bg-gradient-to-b from-amber-300 via-amber-500 to-amber-800 border-yellow-200'
                       : 'bg-slate-900 border-slate-800'
                   }`}
                 >
                   {isHidden ? (
                     <>
-                      {/* Top Bevel Highlight */}
-                      <div className="absolute inset-x-1.5 top-1 h-1.5 rounded-full bg-white/25 pointer-events-none" />
-                      {/* Embossed 3D Star matching the uploaded MINES cover art */}
-                      <span className="text-xl sm:text-2xl text-blue-200 group-hover:text-yellow-300 group-hover:scale-125 transition-transform duration-150 drop-shadow-[0_2px_3px_rgba(0,0,0,0.7)]">
+                      <div className="absolute inset-x-1.5 top-1 h-1.5 rounded-full bg-white/20 pointer-events-none" />
+                      <span className="text-xl sm:text-2xl text-blue-200 group-hover:text-yellow-300 pointer-events-none">
                         ★
                       </span>
                     </>
                   ) : isGem ? (
-                    <div className="flex flex-col items-center justify-center animate-fade-in">
-                      {/* 3D Golden-Yellow Faceted Diamond SVG */}
-                      <svg
-                        viewBox="0 0 64 64"
-                        className="w-8 h-8 sm:w-11 sm:h-11 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)]"
-                      >
-                        <polygon
-                          points="16,12 48,12 58,26 32,56 6,26"
-                          fill="#fef08a"
-                          stroke="#78350f"
-                          strokeWidth="2.5"
-                        />
-                        <polygon points="16,12 48,12 40,26 24,26" fill="#ffffff" />
-                        <polygon points="6,26 16,12 24,26" fill="#fde047" />
-                        <polygon points="58,26 48,12 40,26" fill="#f59e0b" />
-                        <polygon points="24,26 40,26 32,56" fill="#facc15" />
-                        <polygon points="6,26 24,26 32,56" fill="#eab308" fillOpacity="0.85" />
-                        <polygon points="58,26 40,26 32,56" fill="#d97706" fillOpacity="0.9" />
-                      </svg>
+                    <div className="flex flex-col items-center justify-center pointer-events-none">
+                      <GoldenDiamondSvg />
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center animate-fade-in">
-                      {/* Black Spherical Bomb with White Skull & Burning Fuse SVG */}
-                      <svg
-                        viewBox="0 0 64 64"
-                        className={`w-8 h-8 sm:w-11 sm:h-11 ${
-                          isExploded
-                            ? 'drop-shadow-[0_0_12px_rgba(254,240,138,1)] animate-bounce'
-                            : 'drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]'
-                        }`}
-                      >
-                        {/* Burning Fuse & Spark */}
-                        <path
-                          d="M 32 12 Q 44 4 50 12"
-                          fill="none"
-                          stroke="#f59e0b"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                        />
-                        <circle cx="51" cy="12" r="5" fill="#f97316" />
-                        <circle cx="51" cy="12" r="2.5" fill="#fef08a" />
-                        {/* Black Bomb Sphere */}
-                        <circle
-                          cx="32"
-                          cy="35"
-                          r="20"
-                          fill="#090d16"
-                          stroke={isExploded ? '#fde047' : '#475569'}
-                          strokeWidth="2.5"
-                        />
-                        {/* White Skull Emblem on Bomb */}
-                        <circle cx="32" cy="33" r="8.5" fill="#f8fafc" />
-                        <rect x="28" y="38" width="8" height="5" rx="1" fill="#f8fafc" />
-                        <circle cx="29" cy="32" r="2.2" fill="#090d16" />
-                        <circle cx="35" cy="32" r="2.2" fill="#090d16" />
-                      </svg>
+                    <div className="flex flex-col items-center justify-center pointer-events-none">
+                      <SkullBombSvg isExploded={isExploded} />
                       {isExploded && (
                         <span className="text-[9px] font-black text-yellow-200 uppercase tracking-tighter -mt-1">
                           BOOM!
@@ -1284,14 +1316,14 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
             })}
           </div>
 
-          {/* INSTANT ACTION BAR RIGHT BELOW THE 5x5 GRID (Fixes mobile/desktop click workflow) */}
+          {/* INSTANT ACTION BAR RIGHT BELOW THE 5x5 GRID */}
           <div className="w-full max-w-[440px] mt-3 relative z-10">
             {!roundActive ? (
               <div className="grid grid-cols-12 gap-2">
                 <button
                   type="button"
                   onClick={handleStartGame}
-                  className="col-span-8 py-3 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  className="col-span-8 py-3 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation"
                 >
                   <Zap className="w-4 h-4 fill-slate-950" />
                   <span>START GAME (Rs. {betAmount.toLocaleString()})</span>
@@ -1299,7 +1331,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 <button
                   type="button"
                   onClick={handlePickRandomTile}
-                  className="col-span-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-1 transition cursor-pointer"
+                  className="col-span-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-1 cursor-pointer touch-manipulation"
                 >
                   <Shuffle className="w-3.5 h-3.5" />
                   <span>1-Tap Play</span>
@@ -1310,10 +1342,10 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 <button
                   type="button"
                   disabled={gemsRevealed === 0}
-                  onClick={() => executeCashout(gemsRevealed, tiles)}
-                  className={`col-span-8 py-3 rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  onClick={() => executeCashout()}
+                  className={`col-span-8 py-3 rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
                     gemsRevealed > 0
-                      ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-500 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.5)]'
+                      ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-500 text-slate-950 shadow-lg'
                       : 'bg-slate-800 border border-slate-700 text-slate-300'
                   }`}
                 >
@@ -1327,7 +1359,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
                 <button
                   type="button"
                   onClick={handlePickRandomTile}
-                  className="col-span-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 transition cursor-pointer"
+                  className="col-span-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer touch-manipulation"
                 >
                   <Shuffle className="w-3.5 h-3.5" />
                   <span>Pick ★</span>
@@ -1338,7 +1370,7 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
 
           {/* Win Celebration Overlay Banner */}
           {!roundActive && roundResult === 'won' && winPayout > 0 && (
-            <div className="mt-3 w-full max-w-[440px] rounded-2xl bg-gradient-to-r from-amber-950 via-yellow-900/80 to-emerald-950 border-2 border-amber-400 p-3.5 flex items-center justify-between shadow-[0_0_30px_rgba(245,158,11,0.35)] animate-fade-in">
+            <div className="mt-3 w-full max-w-[440px] rounded-2xl bg-gradient-to-r from-amber-950 via-yellow-900/80 to-emerald-950 border-2 border-amber-400 p-3.5 flex items-center justify-between shadow-lg">
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 block">
                   🎉 Diamond Cashout Successful! (Tap any tile to play again)
@@ -1407,4 +1439,3 @@ export const MinesGameView: React.FC<MinesGameViewProps> = ({
     </div>
   );
 };
-

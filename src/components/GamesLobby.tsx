@@ -39,6 +39,7 @@ interface GamesLobbyProps {
   currentUser: User;
   activePlayersCount?: number;
   onSelectBalloonCrash: (soundEnabled?: boolean) => void;
+  onSelectJetX?: () => void;
   onSelectMines?: () => void;
   onSelectSportsBetting?: () => void;
   onOpenCashier: (tab?: 'deposit' | 'withdraw') => void;
@@ -68,16 +69,6 @@ const COMING_SOON_GAMES: ComingSoonGame[] = [
     category: 'crash',
     categoryLabel: 'Crash Games',
     icon: '🚀',
-    gradient: 'from-slate-900 via-slate-900 to-slate-950',
-    accentText: 'text-amber-400',
-  },
-  {
-    id: 'aviator_jet',
-    title: 'Lion Jet X',
-    subtitle: 'Crash • Multiplayer',
-    category: 'crash',
-    categoryLabel: 'Crash Games',
-    icon: '✈️',
     gradient: 'from-slate-900 via-slate-900 to-slate-950',
     accentText: 'text-amber-400',
   },
@@ -125,6 +116,7 @@ const CATEGORIES: { id: GameCategory; label: string; badge: string }[] = [
 export const GamesLobby: React.FC<GamesLobbyProps> = ({
   currentUser,
   onSelectBalloonCrash,
+  onSelectJetX,
   onSelectMines,
   onSelectSportsBetting,
   onOpenCashier,
@@ -480,6 +472,74 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
         <button
           type="button"
           onClick={handleLaunchBalloonCrash}
+          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
+        >
+          <Play className="w-3.5 h-3.5 fill-slate-950" />
+          <span>PLAY NOW</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  const jetxOnlineCount = Math.max(32, totalOnlineInGame + 6);
+  const JETX_LOGO = COMING_SOON_GAME_COVERS.aviator_jet;
+
+  const renderJetXCard = () => (
+    <div className="group relative rounded-xl overflow-hidden border-2 border-sky-500/80 hover:border-sky-400 bg-slate-950 shadow-lg shadow-sky-500/10 transition-all duration-200 flex flex-col justify-between">
+      {/* JetX Lobby Cover Image */}
+      <div
+        onClick={() => onSelectJetX?.()}
+        className="relative w-full aspect-[3/4] overflow-hidden select-none bg-[#04091a] flex items-center justify-center cursor-pointer"
+      >
+        <img
+          src={JETX_LOGO}
+          alt="JetX Lobby Cover"
+          className="w-full h-full object-cover object-center transform group-hover:scale-105 transition-transform duration-300"
+        />
+
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/55 via-transparent to-slate-950/30 pointer-events-none" />
+
+        {/* Top Live Status Badges */}
+        <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 z-10">
+          <div className="flex flex-col items-start gap-1">
+            <span className="px-2 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              LIVE
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-emerald-500/60 text-emerald-400 text-[9px] font-bold font-mono tabular-nums flex items-center gap-1">
+              <Users className="w-2.5 h-2.5 text-emerald-400" />
+              <span>{jetxOnlineCount} Online</span>
+            </span>
+          </div>
+          <span className="px-1.5 py-0.5 rounded bg-slate-950/90 border border-sky-400/60 text-sky-400 text-[8px] font-bold uppercase">
+            JETX
+          </span>
+        </div>
+
+        {/* Bottom Tag */}
+        <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-center z-10">
+          <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-sky-400/50 text-sky-300 text-[8.5px] font-bold tracking-wider uppercase shadow">
+            Supersonic Jet Crash • LKR
+          </span>
+        </div>
+      </div>
+
+      {/* Card Footer */}
+      <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-1">
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-white truncate">
+              JetX (Lion Jet X)
+            </h3>
+            <span className="text-[10px] text-sky-400 font-medium block">
+              Supersonic Crash • LKR
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onSelectJetX?.()}
           className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs tracking-wide flex items-center justify-center gap-1.5 transition cursor-pointer shadow-sm"
         >
           <Play className="w-3.5 h-3.5 fill-slate-950" />
@@ -1036,7 +1096,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           ===================================================================== */}
       {selectedCategory === 'all' ? (
         <div className="space-y-6">
-          {/* Category 1: Crash Games ONLY (Balloon Crash, Space Rocket, Lion Jet X) */}
+          {/* Category 1: Crash Games ONLY (Balloon Crash, JetX, Space Rocket) */}
           <div className="space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <div className="flex items-center gap-2">
@@ -1045,12 +1105,13 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
                   Crash Games
                 </h3>
                 <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-400 text-[10px] font-bold">
-                  1 Live • 2 Coming Soon
+                  2 Live • 1 Coming Soon
                 </span>
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5">
               {renderBalloonCrashCard()}
+              {renderJetXCard()}
               {COMING_SOON_GAMES.filter((g) => g.category === 'crash').map(renderComingSoonCard)}
             </div>
           </div>
@@ -1104,6 +1165,7 @@ export const GamesLobby: React.FC<GamesLobbyProps> = ({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5">
             {showBalloonCrash && renderBalloonCrashCard()}
+            {showBalloonCrash && renderJetXCard()}
             {showMinesGame && renderLankaMinesCard()}
             {showSportsBetting && renderSportsBettingCard()}
             {filteredComingSoon.map(renderComingSoonCard)}

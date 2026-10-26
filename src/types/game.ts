@@ -167,6 +167,7 @@ export interface AdminSettings {
   isGamePaused: boolean;
   crashGamesConfig?: Record<CrashGameId, CrashGameEngineConfig>;
   minesConfig?: MinesGameEngineConfig;
+  updatedAt?: number;
 }
 
 export interface LeaderboardEntry {

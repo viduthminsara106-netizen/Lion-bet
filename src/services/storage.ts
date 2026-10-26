@@ -1920,16 +1920,20 @@ export function getAdminSettings(): AdminSettings {
 }
 
 export function saveAdminSettings(settings: AdminSettings) {
-  localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(settings));
   const now = Date.now();
+  const stamped: AdminSettings = {
+    ...settings,
+    updatedAt: now,
+  };
+  localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(stamped));
   setDoc(doc(db, 'lionbet_cloud', 'settings_v1'), {
-    json: JSON.stringify(settings),
+    json: JSON.stringify(stamped),
     updatedAt: now,
   }).catch(() => {});
   fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ settings }),
+    body: JSON.stringify({ settings: stamped }),
   }).catch(() => {});
   if (FIRESTORE_BASE_URL && FIRESTORE_API_KEY) {
     fetch(`${FIRESTORE_BASE_URL}/lionbet_cloud/settings_v1?key=${FIRESTORE_API_KEY}`, {
@@ -1937,7 +1941,7 @@ export function saveAdminSettings(settings: AdminSettings) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fields: {
-          json: { stringValue: JSON.stringify(settings) },
+          json: { stringValue: JSON.stringify(stamped) },
           updatedAt: { integerValue: String(now) },
         },
       }),
@@ -1968,9 +1972,25 @@ export async function syncAdminSettingsWithServer(): Promise<AdminSettings> {
       } catch {}
     }
 
-    const remoteSettings = cloudSettings || apiRes?.settings;
+    const srvSettings = apiRes?.settings;
+    let remoteSettings: any = null;
+    if (cloudSettings && srvSettings) {
+      remoteSettings =
+        (cloudSettings.updatedAt || 0) >= (srvSettings.updatedAt || 0)
+          ? cloudSettings
+          : srvSettings;
+    } else {
+      remoteSettings = cloudSettings || srvSettings;
+    }
+
     if (remoteSettings && typeof remoteSettings === 'object') {
       const current = getAdminSettings();
+      const localTs = current.updatedAt || 0;
+      const remoteTs = remoteSettings.updatedAt || 0;
+      // Never overwrite newer local Admin signal changes with an older remote snapshot!
+      if (localTs > remoteTs) {
+        return current;
+      }
       const merged: AdminSettings = {
         ...current,
         ...remoteSettings,

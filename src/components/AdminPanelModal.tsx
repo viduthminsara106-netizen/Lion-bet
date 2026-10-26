@@ -123,7 +123,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [selectedGameId, setSelectedGameId] = useState<CrashGameId>(
     settings.selectedCrashGameId || 'balloon_crash'
   );
-  const [singleQueueInput, setSingleQueueInput] = useState<string>('1.00');
+  const [singleQueueInput, setSingleQueueInput] = useState<string>('2.50');
   const [bulkQueueInput, setBulkQueueInput] = useState<string>('');
 
   useEffect(() => {
@@ -459,21 +459,44 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     customNotification?: string
   ) => {
     const currentCfg = getSelectedGameConfig();
+    // When Admin creates/updates queuedMultipliers, clear any leftover nextCrashOverride unless explicitly setting it
+    const effectiveOverride =
+      partial.nextCrashOverride !== undefined
+        ? partial.nextCrashOverride
+        : partial.queuedMultipliers !== undefined
+        ? null
+        : currentCfg.nextCrashOverride;
+
     const updatedCfg: CrashGameEngineConfig = {
       ...currentCfg,
       ...partial,
+      nextCrashOverride: effectiveOverride,
       queuedMultipliers: (partial.queuedMultipliers ?? currentCfg.queuedMultipliers ?? []).slice(
         0,
         30
       ),
     };
 
+    const existingBalloon = settings.crashGamesConfig?.balloon_crash || updatedCfg;
     const nextCrashGamesConfig = {
       ...(settings.crashGamesConfig || ({} as Record<CrashGameId, CrashGameEngineConfig>)),
       [selectedGameId]: updatedCfg,
+      balloon_crash:
+        selectedGameId === 'balloon_crash'
+          ? updatedCfg
+          : {
+              ...existingBalloon,
+              nextCrashOverride:
+                partial.nextCrashOverride !== undefined || partial.queuedMultipliers !== undefined
+                  ? effectiveOverride
+                  : existingBalloon.nextCrashOverride,
+              queuedMultipliers:
+                partial.queuedMultipliers !== undefined
+                  ? updatedCfg.queuedMultipliers
+                  : existingBalloon.queuedMultipliers,
+            },
     };
 
-    // Sync top-level settings when balloon_crash is selected or as active game config
     const nextSettings: AdminSettings = {
       ...settings,
       selectedCrashGameId: selectedGameId,
@@ -489,14 +512,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           : settings.instant100Probability,
       minBet: selectedGameId === 'balloon_crash' ? updatedCfg.minBet : settings.minBet,
       maxBet: selectedGameId === 'balloon_crash' ? updatedCfg.maxBet : settings.maxBet,
-      nextCrashOverride:
-        selectedGameId === 'balloon_crash'
-          ? updatedCfg.nextCrashOverride
-          : settings.nextCrashOverride,
-      queuedMultipliers:
-        selectedGameId === 'balloon_crash'
-          ? updatedCfg.queuedMultipliers
-          : settings.queuedMultipliers,
+      nextCrashOverride: effectiveOverride,
+      queuedMultipliers: updatedCfg.queuedMultipliers,
       crashGamesConfig: nextCrashGamesConfig,
     };
 
@@ -1759,25 +1776,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               for (let i = 0; i < 30; i++) {
                 const r = Math.random();
                 if (mode === 'instant_1x_trap') {
-                  if (r < 0.35) generated.push(1.0);
-                  else if (r < 0.75) generated.push(Number((1.02 + Math.random() * 0.25).toFixed(2)));
-                  else if (r < 0.93) generated.push(Number((1.35 + Math.random() * 0.85).toFixed(2)));
-                  else generated.push(Number((2.5 + Math.random() * 4.5).toFixed(2)));
+                  if (r < 0.35) generated.push(Number((1.12 + Math.random() * 0.18).toFixed(2)));
+                  else if (r < 0.75) generated.push(Number((1.28 + Math.random() * 0.35).toFixed(2)));
+                  else if (r < 0.93) generated.push(Number((1.65 + Math.random() * 0.95).toFixed(2)));
+                  else generated.push(Number((2.8 + Math.random() * 4.5).toFixed(2)));
                 } else if (mode === 'high_loss') {
-                  if (r < 0.22) generated.push(1.0);
-                  else if (r < 0.65) generated.push(Number((1.03 + Math.random() * 0.32).toFixed(2)));
-                  else if (r < 0.88) generated.push(Number((1.4 + Math.random() * 1.1).toFixed(2)));
-                  else generated.push(Number((2.8 + Math.random() * 6.0).toFixed(2)));
+                  if (r < 0.30) generated.push(Number((1.15 + Math.random() * 0.25).toFixed(2)));
+                  else if (r < 0.65) generated.push(Number((1.42 + Math.random() * 0.55).toFixed(2)));
+                  else if (r < 0.88) generated.push(Number((2.05 + Math.random() * 1.45).toFixed(2)));
+                  else generated.push(Number((3.6 + Math.random() * 6.5).toFixed(2)));
                 } else {
-                  if (r < 0.12) generated.push(1.0);
-                  else if (r < 0.42) generated.push(Number((1.08 + Math.random() * 0.45).toFixed(2)));
-                  else if (r < 0.78) generated.push(Number((1.6 + Math.random() * 2.2).toFixed(2)));
-                  else generated.push(Number((4.0 + Math.random() * 12.0).toFixed(2)));
+                  if (r < 0.25) generated.push(Number((1.25 + Math.random() * 0.45).toFixed(2)));
+                  else if (r < 0.60) generated.push(Number((1.75 + Math.random() * 1.65).toFixed(2)));
+                  else if (r < 0.85) generated.push(Number((3.4 + Math.random() * 3.8).toFixed(2)));
+                  else generated.push(Number((7.5 + Math.random() * 14.5).toFixed(2)));
                 }
               }
               updateSelectedGameConfig(
                 { queuedMultipliers: generated },
-                `Generated 30 multipliers (${mode.replace(/_/g, ' ').toUpperCase()}) for ${activeGameCfg.gameName}!`
+                `Generated 30 signals (${mode.replace(/_/g, ' ').toUpperCase()}) for ${activeGameCfg.gameName}!`
               );
             };
 
